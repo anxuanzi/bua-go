@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
@@ -99,8 +100,11 @@ type Result struct {
 	// Steps contains the history of steps taken during execution.
 	Steps []Step
 
-	// TokensUsed is the total number of tokens consumed.
+	// TokensUsed is the total number of tokens consumed (estimated).
 	TokensUsed int
+
+	// Duration is the total time taken to complete the task.
+	Duration time.Duration
 
 	// ScreenshotPaths contains paths to screenshots taken during execution.
 	ScreenshotPaths []string
@@ -307,6 +311,17 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 	}
 	sessionID := createResp.Session.ID()
 
+	// Get logger for token/timing tracking
+	logger := a.browserAgent.GetLogger()
+	if logger != nil {
+		logger.StartTask()
+		// Track prompt tokens
+		tokens := logger.GetTokens()
+		if tokens != nil {
+			tokens.AddText(prompt)
+		}
+	}
+
 	// Execute the agent and collect events
 	result := &Result{
 		Success: true,
@@ -332,6 +347,25 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			if event.Content != nil {
 				for i, part := range event.Content.Parts {
 					if part != nil {
+						// Track tokens from content
+						if logger != nil && !event.Partial {
+							tokens := logger.GetTokens()
+							if tokens != nil {
+								if part.Text != "" {
+									tokens.AddText(part.Text)
+								}
+								if part.FunctionCall != nil {
+									// Estimate tokens for function call (name + args)
+									callStr := fmt.Sprintf("%s(%v)", part.FunctionCall.Name, part.FunctionCall.Args)
+									tokens.AddText(callStr)
+								}
+								if part.FunctionResponse != nil {
+									// Estimate tokens for function response
+									respStr := fmt.Sprintf("%v", part.FunctionResponse.Response)
+									tokens.AddText(respStr)
+								}
+							}
+						}
 						if a.config.Debug {
 							if part.Text != "" {
 								fmt.Printf("[DEBUG] Part[%d] Text: %s\n", i, truncateString(part.Text, 200))
@@ -384,6 +418,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		result.Data = map[string]any{"response": lastResponse}
 	} else if doneSummary != "" {
 		result.Data = map[string]any{"summary": doneSummary}
+	}
+
+	// Add stats to result
+	if logger != nil {
+		result.Duration = logger.TaskDuration()
+		tokens := logger.GetTokens()
+		if tokens != nil {
+			result.TokensUsed = tokens.Used()
+		}
 	}
 
 	return result, nil

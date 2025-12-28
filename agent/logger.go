@@ -20,8 +20,12 @@ const (
 
 // Logger provides structured logging with emojis and formatting.
 type Logger struct {
-	enabled   bool
-	stepCount int
+	enabled       bool
+	stepCount     int
+	stepStartTime time.Time     // Start time of current step
+	taskStartTime time.Time     // Start time of entire task
+	tokens        *TokenCounter // Token counter for tracking usage
+	stepTokens    int           // Tokens used in current step
 }
 
 // NewLogger creates a new logger.
@@ -29,18 +33,86 @@ func NewLogger(enabled bool) *Logger {
 	return &Logger{
 		enabled:   enabled,
 		stepCount: 0,
+		tokens:    NewTokenCounter(1048576), // Default 1M tokens
 	}
 }
 
-// IncrementStep increments the step counter.
+// SetTokenCounter sets a custom token counter.
+func (l *Logger) SetTokenCounter(tc *TokenCounter) {
+	l.tokens = tc
+}
+
+// StartTask marks the beginning of a task.
+func (l *Logger) StartTask() {
+	l.taskStartTime = time.Now()
+	l.stepCount = 0
+	if l.tokens != nil {
+		l.tokens.Reset()
+	}
+}
+
+// GetTokens returns the token counter.
+func (l *Logger) GetTokens() *TokenCounter {
+	return l.tokens
+}
+
+// AddTokens adds tokens to the counter and current step.
+func (l *Logger) AddTokens(tokens int) {
+	l.stepTokens += tokens
+	if l.tokens != nil {
+		l.tokens.Add(tokens)
+	}
+}
+
+// IncrementStep increments the step counter and resets step timing.
 func (l *Logger) IncrementStep() int {
 	l.stepCount++
+	l.stepStartTime = time.Now()
+	l.stepTokens = 0
 	return l.stepCount
 }
 
 // GetStep returns the current step count.
 func (l *Logger) GetStep() int {
 	return l.stepCount
+}
+
+// StepDuration returns the duration of the current step.
+func (l *Logger) StepDuration() time.Duration {
+	if l.stepStartTime.IsZero() {
+		return 0
+	}
+	return time.Since(l.stepStartTime)
+}
+
+// TaskDuration returns the total duration since task start.
+func (l *Logger) TaskDuration() time.Duration {
+	if l.taskStartTime.IsZero() {
+		return 0
+	}
+	return time.Since(l.taskStartTime)
+}
+
+// formatDuration formats a duration for display.
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%.1fm", d.Minutes())
+}
+
+// formatTokens formats token count for display.
+func formatTokens(tokens int) string {
+	if tokens >= 1000000 {
+		return fmt.Sprintf("%.1fM", float64(tokens)/1000000)
+	}
+	if tokens >= 1000 {
+		return fmt.Sprintf("%.1fK", float64(tokens)/1000)
+	}
+	return fmt.Sprintf("%d", tokens)
 }
 
 // timestamp returns a formatted timestamp.
@@ -66,6 +138,26 @@ func (l *Logger) Action(action, target, reasoning string) {
 		fmt.Printf("│ 💭 Reasoning: %s\n", truncate(reasoning, 60))
 	}
 	fmt.Printf("└─────────────────────────────────────────────────────────────────\n")
+}
+
+// ActionComplete logs the completion of an action with timing and tokens.
+func (l *Logger) ActionComplete(success bool, message string, stepTokens int) {
+	if !l.enabled {
+		return
+	}
+	duration := l.StepDuration()
+	var tokensStr, totalStr string
+	if stepTokens > 0 {
+		tokensStr = fmt.Sprintf(" [+%s tokens]", formatTokens(stepTokens))
+	}
+	if l.tokens != nil {
+		totalStr = fmt.Sprintf(" [total: %s]", formatTokens(l.tokens.Used()))
+	}
+	if success {
+		fmt.Printf("   ✅ %s (%s)%s%s\n", message, formatDuration(duration), tokensStr, totalStr)
+	} else {
+		fmt.Printf("   ❌ %s (%s)%s%s\n", message, formatDuration(duration), tokensStr, totalStr)
+	}
 }
 
 // ActionResult logs the result of an action.
@@ -152,7 +244,7 @@ func (l *Logger) Extract(what string) {
 	l.Action("EXTRACT", what, "")
 }
 
-// Done logs task completion.
+// Done logs task completion with final statistics.
 func (l *Logger) Done(success bool, summary string) {
 	if !l.enabled {
 		return
@@ -166,6 +258,15 @@ func (l *Logger) Done(success bool, summary string) {
 	}
 	fmt.Printf("╠═════════════════════════════════════════════════════════════════\n")
 	fmt.Printf("║ 📝 %s\n", truncate(summary, 60))
+	fmt.Printf("╠═════════════════════════════════════════════════════════════════\n")
+	fmt.Printf("║ 📊 Stats: %d steps", l.stepCount)
+	if !l.taskStartTime.IsZero() {
+		fmt.Printf(" │ ⏱️  %s", formatDuration(l.TaskDuration()))
+	}
+	if l.tokens != nil && l.tokens.Used() > 0 {
+		fmt.Printf(" │ 🎫 %s tokens (%.1f%%)", formatTokens(l.tokens.Used()), l.tokens.UsagePercent())
+	}
+	fmt.Printf("\n")
 	fmt.Printf("╚═════════════════════════════════════════════════════════════════\n")
 }
 

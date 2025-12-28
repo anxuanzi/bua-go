@@ -1058,6 +1058,11 @@ func (a *BrowserAgent) GetFindings() []map[string]any {
 	return result
 }
 
+// GetLogger returns the logger for external token/timing updates.
+func (a *BrowserAgent) GetLogger() *Logger {
+	return a.logger
+}
+
 // Result represents the result of a task execution.
 type Result struct {
 	Success         bool
