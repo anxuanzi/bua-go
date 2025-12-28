@@ -21,12 +21,13 @@ func main() {
 
 	// Create agent configuration
 	cfg := bua.Config{
-		APIKey:      apiKey,
-		Model:       "gemini-2.5-flash",
-		ProfileName: "scraping",
-		Headless:    false, // Show browser for testing
-		Viewport:    bua.DesktopViewport,
-		Debug:       true,
+		APIKey:          apiKey,
+		Model:           "gemini-2.5-flash",
+		ProfileName:     "scraping",
+		Headless:        false, // Show browser for testing
+		Viewport:        bua.DesktopViewport,
+		Debug:           true,
+		ShowAnnotations: true,
 	}
 
 	// Create the agent

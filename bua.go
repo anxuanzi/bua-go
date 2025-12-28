@@ -62,6 +62,11 @@ type Config struct {
 
 	// Debug enables verbose logging.
 	Debug bool
+
+	// ShowAnnotations enables visual element annotations in the browser.
+	// When enabled, annotations are shown before each action for debugging.
+	// Also captures annotated screenshots for each step.
+	ShowAnnotations bool
 }
 
 // Viewport defines browser viewport dimensions.
@@ -136,13 +141,13 @@ type Agent struct {
 func New(cfg Config) (*Agent, error) {
 	// Apply defaults
 	if cfg.Model == "" {
-		cfg.Model = "gemini-2.5-flash"
+		cfg.Model = "gemini-3-flash-preview"
 	}
 	if cfg.Viewport == nil {
 		cfg.Viewport = DesktopViewport
 	}
 	if cfg.MaxTokens == 0 {
-		cfg.MaxTokens = 128000
+		cfg.MaxTokens = 1048576 // gemini-3-flash-preview input limit
 	}
 	if cfg.ProfileDir == "" {
 		home, err := os.UserHomeDir()
@@ -241,13 +246,21 @@ func (a *Agent) Start(ctx context.Context) error {
 		}
 	}
 
+	// Determine screenshot directory for annotations
+	screenshotDir := ""
+	if a.config.ShowAnnotations {
+		screenshotDir = filepath.Join(a.config.ProfileDir, "..", "screenshots", "steps")
+	}
+
 	// Create and initialize ADK browser agent
 	a.browserAgent = agent.New(agent.Config{
-		APIKey:        a.config.APIKey,
-		Model:         a.config.Model,
-		MaxIterations: 50,
-		MaxTokens:     a.config.MaxTokens,
-		Debug:         a.config.Debug,
+		APIKey:          a.config.APIKey,
+		Model:           a.config.Model,
+		MaxIterations:   50,
+		MaxTokens:       a.config.MaxTokens,
+		Debug:           a.config.Debug,
+		ShowAnnotations: a.config.ShowAnnotations,
+		ScreenshotDir:   screenshotDir,
 	}, a.browser, a.memory)
 
 	if err := a.browserAgent.Init(ctx); err != nil {
@@ -538,4 +551,63 @@ func (a *Agent) Call(ctx context.Context, method string, params any) (json.RawMe
 	}
 
 	return json.RawMessage(result), nil
+}
+
+// AnnotationConfig is an alias for browser.AnnotationConfig.
+type AnnotationConfig = browser.AnnotationConfig
+
+// DefaultAnnotationConfig returns the default annotation configuration.
+func DefaultAnnotationConfig() *AnnotationConfig {
+	return browser.DefaultAnnotationConfig()
+}
+
+// ShowAnnotations draws visual overlays on all detected elements in the browser.
+// This helps visualize what elements the agent can see and interact with.
+// Pass nil for cfg to use default settings.
+func (a *Agent) ShowAnnotations(ctx context.Context, cfg *AnnotationConfig) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.browser == nil {
+		return fmt.Errorf("agent not started, call Start() first")
+	}
+
+	// Get current element map
+	elements, err := a.browser.GetElementMap(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get elements: %w", err)
+	}
+
+	return a.browser.ShowAnnotations(ctx, elements, cfg)
+}
+
+// HideAnnotations removes all annotation overlays from the browser.
+func (a *Agent) HideAnnotations(ctx context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.browser == nil {
+		return fmt.Errorf("agent not started, call Start() first")
+	}
+
+	return a.browser.HideAnnotations(ctx)
+}
+
+// ToggleAnnotations shows or hides annotations based on current state.
+// Returns true if annotations are now visible, false if hidden.
+func (a *Agent) ToggleAnnotations(ctx context.Context, cfg *AnnotationConfig) (bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.browser == nil {
+		return false, fmt.Errorf("agent not started, call Start() first")
+	}
+
+	// Get current element map
+	elements, err := a.browser.GetElementMap(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get elements: %w", err)
+	}
+
+	return a.browser.ToggleAnnotations(ctx, elements, cfg)
 }

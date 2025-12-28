@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"google.golang.org/adk/agent"
@@ -35,6 +36,12 @@ type Config struct {
 
 	// Debug enables verbose logging.
 	Debug bool
+
+	// ShowAnnotations enables visual element annotations before actions.
+	ShowAnnotations bool
+
+	// ScreenshotDir is the directory to save annotated screenshots.
+	ScreenshotDir string
 }
 
 // BrowserAgent wraps an ADK agent with browser automation capabilities.
@@ -43,6 +50,7 @@ type BrowserAgent struct {
 	browser  *browser.Browser
 	memory   *memory.Manager
 	adkAgent agent.Agent
+	logger   *Logger
 }
 
 // New creates a new browser agent.
@@ -51,16 +59,17 @@ func New(cfg Config, b *browser.Browser, m *memory.Manager) *BrowserAgent {
 		cfg.MaxIterations = 50
 	}
 	if cfg.MaxTokens == 0 {
-		cfg.MaxTokens = 128000
+		cfg.MaxTokens = 1048576 // gemini-3-flash-preview input limit
 	}
 	if cfg.Model == "" {
-		cfg.Model = "gemini-2.5-flash"
+		cfg.Model = "gemini-3-flash-preview"
 	}
 
 	return &BrowserAgent{
 		config:  cfg,
 		browser: b,
 		memory:  m,
+		logger:  NewLogger(cfg.Debug),
 	}
 }
 
@@ -95,7 +104,7 @@ func (a *BrowserAgent) Init(ctx context.Context) error {
 		Tools:       tools,
 		GenerateContentConfig: &genai.GenerateContentConfig{
 			Temperature:     genai.Ptr[float32](0.2),
-			MaxOutputTokens: 4096,
+			MaxOutputTokens: 16384, // Conservative output limit (model supports 65536)
 		},
 	})
 	if err != nil {
@@ -104,6 +113,75 @@ func (a *BrowserAgent) Init(ctx context.Context) error {
 	a.adkAgent = adkAgent
 
 	return nil
+}
+
+// preAction shows annotations and captures a screenshot before an action.
+// Returns the screenshot path if captured, or empty string.
+func (a *BrowserAgent) preAction(actionName string) string {
+	if a.browser == nil || !a.config.ShowAnnotations {
+		return ""
+	}
+
+	bgCtx := context.Background()
+
+	// Get element map
+	elements, err := a.browser.GetElementMap(bgCtx)
+	if err != nil {
+		a.logger.Error("preAction/GetElementMap", err)
+		return ""
+	}
+
+	// Show annotations in browser
+	err = a.browser.ShowAnnotations(bgCtx, elements, nil)
+	if err != nil {
+		a.logger.Error("preAction/ShowAnnotations", err)
+	} else {
+		a.logger.Annotation(elements.Count())
+	}
+
+	// Take annotated screenshot
+	if a.config.ScreenshotDir != "" {
+		screenshot, err := a.browser.ScreenshotWithAnnotations(bgCtx, elements)
+		if err != nil {
+			a.logger.Error("preAction/Screenshot", err)
+			return ""
+		}
+
+		// Save screenshot
+		filename := fmt.Sprintf("step_%03d_%s_%s.png",
+			a.logger.GetStep()+1,
+			actionName,
+			time.Now().Format("150405"))
+		path := filepath.Join(a.config.ScreenshotDir, filename)
+
+		// Ensure directory exists
+		if err := os.MkdirAll(a.config.ScreenshotDir, 0755); err != nil {
+			a.logger.Error("preAction/MkdirAll", err)
+			return ""
+		}
+
+		if err := os.WriteFile(path, screenshot, 0644); err != nil {
+			a.logger.Error("preAction/WriteFile", err)
+			return ""
+		}
+
+		a.logger.Screenshot(path, true)
+		return path
+	}
+
+	return ""
+}
+
+// postAction cleans up annotations after an action.
+func (a *BrowserAgent) postAction() {
+	if a.browser == nil || !a.config.ShowAnnotations {
+		return
+	}
+
+	bgCtx := context.Background()
+	if err := a.browser.HideAnnotations(bgCtx); err != nil {
+		a.logger.Error("postAction/HideAnnotations", err)
+	}
 }
 
 // createBrowserTools creates the function tools for browser automation.
@@ -115,15 +193,21 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return ClickOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
+
+		a.logger.Click(input.ElementIndex, input.Reasoning)
+		a.preAction("click")
+		defer a.postAction()
+
 		err := a.browser.Click(context.Background(), input.ElementIndex)
 		if err != nil {
+			a.logger.ActionResult(false, err.Error())
 			return ClickOutput{Success: false, Message: err.Error()}, nil
 		}
 		a.browser.WaitForStable(context.Background())
-		return ClickOutput{
-			Success: true,
-			Message: fmt.Sprintf("Clicked element %d", input.ElementIndex),
-		}, nil
+
+		msg := fmt.Sprintf("Clicked element %d", input.ElementIndex)
+		a.logger.ActionResult(true, msg)
+		return ClickOutput{Success: true, Message: msg}, nil
 	}
 	clickTool, err := functiontool.New(
 		functiontool.Config{
@@ -142,14 +226,20 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return TypeOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
+
+		a.logger.Type(input.ElementIndex, input.Text, input.Reasoning)
+		a.preAction("type")
+		defer a.postAction()
+
 		err := a.browser.TypeInElement(context.Background(), input.ElementIndex, input.Text)
 		if err != nil {
+			a.logger.ActionResult(false, err.Error())
 			return TypeOutput{Success: false, Message: err.Error()}, nil
 		}
-		return TypeOutput{
-			Success: true,
-			Message: fmt.Sprintf("Typed '%s' into element %d", input.Text, input.ElementIndex),
-		}, nil
+
+		msg := fmt.Sprintf("Typed '%s' into element %d", input.Text, input.ElementIndex)
+		a.logger.ActionResult(true, msg)
+		return TypeOutput{Success: true, Message: msg}, nil
 	}
 	typeTool, err := functiontool.New(
 		functiontool.Config{
@@ -168,10 +258,16 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return ScrollOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
+
 		amount := input.Amount
 		if amount == 0 {
 			amount = 500
 		}
+
+		a.logger.Scroll(input.Direction, amount, input.Reasoning)
+		a.preAction("scroll")
+		defer a.postAction()
+
 		var deltaY float64
 		switch input.Direction {
 		case "up":
@@ -179,16 +275,19 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		case "down":
 			deltaY = float64(amount)
 		default:
+			a.logger.ActionResult(false, "Invalid direction")
 			return ScrollOutput{Success: false, Message: "Invalid direction. Use: up or down"}, nil
 		}
+
 		err := a.browser.Scroll(context.Background(), 0, deltaY)
 		if err != nil {
+			a.logger.ActionResult(false, err.Error())
 			return ScrollOutput{Success: false, Message: err.Error()}, nil
 		}
-		return ScrollOutput{
-			Success: true,
-			Message: fmt.Sprintf("Scrolled %s by %d pixels", input.Direction, amount),
-		}, nil
+
+		msg := fmt.Sprintf("Scrolled %s by %d pixels", input.Direction, amount)
+		a.logger.ActionResult(true, msg)
+		return ScrollOutput{Success: true, Message: msg}, nil
 	}
 	scrollTool, err := functiontool.New(
 		functiontool.Config{
@@ -207,15 +306,24 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return NavigateOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
+
+		a.logger.Navigate(input.URL)
+
 		err := a.browser.Navigate(context.Background(), input.URL)
 		if err != nil {
+			a.logger.ActionResult(false, err.Error())
 			return NavigateOutput{Success: false, Message: err.Error()}, nil
 		}
+
+		url := a.browser.GetURL()
+		title := a.browser.GetTitle()
+		a.logger.ActionResult(true, fmt.Sprintf("Loaded: %s", title))
+
 		return NavigateOutput{
 			Success: true,
 			Message: fmt.Sprintf("Navigated to %s", input.URL),
-			URL:     a.browser.GetURL(),
-			Title:   a.browser.GetTitle(),
+			URL:     url,
+			Title:   title,
 		}, nil
 	}
 	navigateTool, err := functiontool.New(
@@ -235,14 +343,18 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return WaitOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
+
+		a.logger.Wait(input.Reason)
+
 		err := a.browser.WaitForStable(context.Background())
 		if err != nil {
+			a.logger.ActionResult(false, err.Error())
 			return WaitOutput{Success: false, Message: err.Error()}, nil
 		}
-		return WaitOutput{
-			Success: true,
-			Message: fmt.Sprintf("Waited for page to stabilize: %s", input.Reason),
-		}, nil
+
+		msg := fmt.Sprintf("Waited for page to stabilize: %s", input.Reason)
+		a.logger.ActionResult(true, "Page stable")
+		return WaitOutput{Success: true, Message: msg}, nil
 	}
 	waitTool, err := functiontool.New(
 		functiontool.Config{
@@ -261,6 +373,9 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return ExtractOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
+
+		a.logger.Extract(input.WhatToExtract)
+
 		data := make(map[string]any)
 		if input.ElementIndex < 0 {
 			data["url"] = a.browser.GetURL()
@@ -269,17 +384,18 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 			if err == nil {
 				data["element_count"] = elements.Count()
 			}
+			a.logger.ActionResult(true, "Extracted page info")
 		} else {
 			elements, err := a.browser.GetElementMap(context.Background())
 			if err != nil {
+				a.logger.ActionResult(false, err.Error())
 				return ExtractOutput{Success: false, Message: err.Error()}, nil
 			}
 			el, ok := elements.ByIndex(input.ElementIndex)
 			if !ok {
-				return ExtractOutput{
-					Success: false,
-					Message: fmt.Sprintf("Element %d not found", input.ElementIndex),
-				}, nil
+				msg := fmt.Sprintf("Element %d not found", input.ElementIndex)
+				a.logger.ActionResult(false, msg)
+				return ExtractOutput{Success: false, Message: msg}, nil
 			}
 			data["tag"] = el.TagName
 			data["text"] = el.Text
@@ -289,7 +405,9 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 			if el.Value != "" {
 				data["value"] = el.Value
 			}
+			a.logger.ActionResult(true, fmt.Sprintf("Extracted from element %d", input.ElementIndex))
 		}
+
 		return ExtractOutput{
 			Success: true,
 			Message: "Data extracted successfully",
@@ -313,18 +431,24 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		if a.browser == nil {
 			return GetPageStateOutput{Success: false, Error: "Browser not initialized"}, nil
 		}
+
 		bgCtx := context.Background()
 		output := GetPageStateOutput{
 			Success: true,
 			URL:     a.browser.GetURL(),
 			Title:   a.browser.GetTitle(),
 		}
+
 		elements, err := a.browser.GetElementMap(bgCtx)
 		if err != nil {
 			output.Error = fmt.Sprintf("Failed to get element map: %v", err)
+			a.logger.Error("get_page_state", err)
 			return output, nil
 		}
+
 		output.ElementMap = elements.ToTokenString()
+		a.logger.PageState(output.URL, output.Title, elements.Count())
+
 		if a.memory != nil {
 			a.memory.AddObservation(&memory.Observation{
 				Timestamp:    time.Now(),
@@ -333,6 +457,7 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 				ElementCount: elements.Count(),
 			})
 		}
+
 		return output, nil
 	}
 	pageStateTool, err := functiontool.New(
@@ -349,6 +474,8 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 
 	// Request human takeover tool
 	humanTakeoverHandler := func(ctx tool.Context, input HumanTakeoverInput) (HumanTakeoverOutput, error) {
+		a.logger.HumanTakeover(input.Reason)
+
 		return HumanTakeoverOutput{
 			Success:   true,
 			Message:   fmt.Sprintf("Human takeover requested: %s. Please complete the action and confirm.", input.Reason),
@@ -369,6 +496,8 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 
 	// Done tool
 	doneHandler := func(ctx tool.Context, input DoneInput) (DoneOutput, error) {
+		a.logger.Done(input.Success, input.Summary)
+
 		return DoneOutput{
 			Success: input.Success,
 			Summary: input.Summary,
