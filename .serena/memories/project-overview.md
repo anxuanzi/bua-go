@@ -8,27 +8,37 @@
 ## Description
 Go library for browser automation powered by LLMs via **Google ADK (Agent Development Kit)**. Uses vision + DOM hybrid approach combining screenshots with parsed HTML and accessibility trees.
 
-## Architecture - ADK Integration
-The project uses Google ADK for Go (`google.golang.org/adk`) as the agent framework:
-- `llmagent.New()` - Creates LLM agents with tools
-- `functiontool.New[TArgs, TResults]()` - Defines browser action tools
-- `runner.New()` + `runner.Run()` - Programmatic agent execution
-- `session.InMemoryService()` - Session management
-- `gemini.NewModel()` - Gemini model creation
+## Key Features
+- **Natural Language Tasks**: Describe what you want in plain English
+- **Vision + DOM Hybrid**: AI sees annotated screenshots AND element structure
+- **10 Browser Tools**: click, type_text, scroll, navigate, wait, extract, get_page_state, download_file, request_human_takeover, done
+- **Visual Annotations**: Colored element overlays showing what the AI sees
+- **File Downloads**: Direct HTTP and authenticated CDP downloads to `~/.bua/downloads/`
+- **Dual-Use Architecture**: Use as library OR embed as tool in other ADK agents
+- **Session Persistence**: Browser profiles save cookies, auth, localStorage
 
 ## Package Structure
 ```
-bua.go           - Main public API (Agent, Config, Run)
-                   Uses adkagent alias to avoid conflict with local agent package
+bua.go              # Main public API (Agent, Config, Run)
 agent/
-  agent.go       - ADK BrowserAgent with llmagent.New + functiontool.New
-  prompts.go     - System prompts for browser automation
-browser/         - Rod browser wrapper + CDP operations
-dom/             - DOM extraction + accessibility tree + element map
-memory/          - Short-term + long-term memory system  
-screenshot/      - Screenshot capture + element annotation (fogleman/gg)
-tools/           - Legacy tool definitions (kept for reference)
-examples/        - Usage examples (simple, scraping)
+  agent.go          # ADK BrowserAgent with 10 tools
+  prompts.go        # System prompts
+  logger.go         # Structured emoji logging
+browser/
+  browser.go        # Rod wrapper, CDP operations
+  annotation.go     # Visual element overlays
+  download.go       # File download capability
+dom/                # Element map, accessibility tree
+memory/             # Short-term + long-term memory
+screenshot/         # Capture + annotation (fogleman/gg)
+export/
+  adktool.go        # BrowserTool, MultiBrowserTool for dual-use
+examples/
+  simple/           # Basic search example
+  scraping/         # Data extraction
+  download/         # File downloads
+  adk_tool/         # Dual-use architecture demo
+  content_research/ # Multi-page research
 ```
 
 ## Key Dependencies
@@ -37,11 +47,36 @@ examples/        - Usage examples (simple, scraping)
 - `github.com/go-rod/rod` - Browser automation
 - `github.com/fogleman/gg` - Image annotation
 
+## Configuration
+```go
+bua.Config{
+    APIKey:          "key",                    // Required
+    Model:           "gemini-3-flash-preview", // Default model
+    ProfileName:     "session",                // Persist browser state
+    Headless:        false,                    // Show browser
+    Viewport:        bua.DesktopViewport,      // 1280x800
+    Debug:           true,                     // Verbose logging
+    ShowAnnotations: true,                     // Visual overlays
+}
+```
+
+## Viewport Presets
+- DesktopViewport: 1280x800 (default)
+- LargeDesktopViewport: 1920x1080
+- TabletViewport: 768x1024
+- MobileViewport: 375x812
+
+## File Locations
+- Browser profiles: `~/.bua/profiles/{name}/`
+- Screenshots: `~/.bua/screenshots/steps/`
+- Downloads: `~/.bua/downloads/`
+
+## Environment
+- `GOOGLE_API_KEY` - Required for Gemini API access
+
 ## ADK Tool Pattern
-All browser tools follow ADK's functiontool signature:
 ```go
 handler := func(ctx tool.Context, input InputType) (OutputType, error) {
-    // implementation
     return OutputType{...}, nil
 }
 tool, err := functiontool.New(functiontool.Config{
@@ -50,20 +85,14 @@ tool, err := functiontool.New(functiontool.Config{
 }, handler)
 ```
 
-## Browser Tools (9 tools defined in agent/agent.go)
-- click - Click element by index
-- type_text - Type into input fields
-- scroll - Scroll page up/down
-- navigate - Go to URL
-- wait - Wait for page stability
-- extract - Extract data from elements
-- get_page_state - Get URL, title, element map
-- request_human_takeover - Request human help
-- done - Signal task completion
-
-## Environment
-- GOOGLE_API_KEY - Required for Gemini API access
+## Import Alias
+Local `agent` package conflicts with ADK's agent package:
+```go
+adkagent "google.golang.org/adk/agent"
+```
 
 ## Testing
-- All tests pass (13 tests across 4 packages)
-- Main test files: bua_test.go, dom/element_test.go, memory/memory_test.go
+```bash
+go build ./...  # Build all
+go test ./...   # Run tests
+```

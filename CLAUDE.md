@@ -65,20 +65,28 @@ adkagent "google.golang.org/adk/agent"
 | Package | Role |
 |---------|------|
 | `bua.go` | Public API: `New()`, `Start()`, `Run()`, `Navigate()` |
-| `agent/` | ADK BrowserAgent, 9 function tools, system prompts |
-| `browser/` | Rod wrapper, CDP operations, element interaction |
+| `agent/` | ADK BrowserAgent, 10 function tools, system prompts, logging |
+| `browser/` | Rod wrapper, CDP operations, element interaction, downloads |
 | `dom/` | ElementMap extraction, accessibility tree, bounding boxes |
 | `memory/` | Short-term observations, long-term pattern storage |
 | `screenshot/` | Capture, element annotation with fogleman/gg |
+| `export/` | Dual-use architecture: BrowserTool, MultiBrowserTool for ADK |
 
 ### Browser Tools (defined in agent/agent.go)
 
-9 tools available to the LLM:
+10 tools available to the LLM:
 - `click`, `type_text`, `scroll`, `navigate`, `wait`
-- `extract`, `get_page_state`
+- `extract`, `get_page_state`, `download_file`
 - `request_human_takeover`, `done`
 
 Each tool uses Input/Output struct pairs with jsonschema tags for parameter descriptions.
+
+### Dual-Use Architecture (export/adktool.go)
+
+bua-go can be embedded as a tool in other ADK applications:
+- `BrowserTool` - Single browser instance wrapper
+- `MultiBrowserTool` - Parallel browser management (create/execute/close/list)
+- `SimpleBrowserTask()` - One-off convenience function
 
 ## Environment
 
@@ -103,9 +111,9 @@ write_memory("name", content) # Store insights for future sessions
 ```
 
 **Current memories:**
-- `project-overview` - High-level architecture and ADK integration details
-- `adk-integration-details` - ADK patterns, tool signatures, import conventions
-- `directory-structure` - Package layout and responsibilities
+- `project-overview` - High-level architecture, features, and package structure
+- `adk-integration-details` - ADK patterns, tool signatures, dual-use architecture
+- `prompt-best-practices` - Prompt engineering patterns for browser automation
 
 ### Semantic Code Operations
 ```
