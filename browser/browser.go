@@ -54,27 +54,36 @@ func (b *Browser) Navigate(ctx context.Context, url string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Create or get page
+	// Create page if needed
 	if b.page == nil {
-		page, err := b.rod.Page(proto.TargetCreateTarget{URL: url})
+		// Create a blank page first
+		page, err := b.rod.Page(proto.TargetCreateTarget{URL: "about:blank"})
 		if err != nil {
 			return fmt.Errorf("failed to create page: %w", err)
 		}
 		b.page = page
 
-		// Set viewport if configured - with proper responsive handling
+		// Set viewport to match window size for proper responsive behavior
+		// Key: Window size (set in launcher) and viewport must match
 		if b.config.Viewport != nil {
 			err := b.page.SetViewport(&proto.EmulationSetDeviceMetricsOverride{
 				Width:             b.config.Viewport.Width,
 				Height:            b.config.Viewport.Height,
 				DeviceScaleFactor: 1.0,
-				Mobile:            false, // Desktop mode for proper responsiveness
+				Mobile:            false,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to set viewport: %w", err)
 			}
 		}
+
+		// Navigate to the URL
+		err = b.page.Navigate(url)
+		if err != nil {
+			return fmt.Errorf("failed to navigate: %w", err)
+		}
 	} else {
+		// Navigate existing page
 		err := b.page.Navigate(url)
 		if err != nil {
 			return fmt.Errorf("failed to navigate: %w", err)
@@ -412,6 +421,11 @@ func (b *Browser) Page() *rod.Page {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.page
+}
+
+// intPtr returns a pointer to an int value.
+func intPtr(v int) *int {
+	return &v
 }
 
 // Close closes the browser.

@@ -72,9 +72,14 @@ type Viewport struct {
 
 // Common viewport presets.
 var (
-	DesktopViewport = &Viewport{Width: 1920, Height: 1080}
-	TabletViewport  = &Viewport{Width: 768, Height: 1024}
-	MobileViewport  = &Viewport{Width: 375, Height: 812}
+	// DesktopViewport is a safe default that fits most laptop screens
+	DesktopViewport = &Viewport{Width: 1280, Height: 800}
+	// LargeDesktopViewport for full HD displays
+	LargeDesktopViewport = &Viewport{Width: 1920, Height: 1080}
+	// TabletViewport for tablet simulation
+	TabletViewport = &Viewport{Width: 768, Height: 1024}
+	// MobileViewport for mobile simulation
+	MobileViewport = &Viewport{Width: 375, Height: 812}
 )
 
 // Result represents the result of a task execution.
@@ -192,10 +197,14 @@ func (a *Agent) Start(ctx context.Context) error {
 		}
 	}
 
-	// Create launcher with proper window size
+	// Create launcher - viewport will be set via CDP for proper responsive handling
 	a.launcher = launcher.New().
-		Set("window-size", fmt.Sprintf("%d,%d", a.config.Viewport.Width, a.config.Viewport.Height)).
 		Set("disable-blink-features", "AutomationControlled"). // Avoid detection
+		Set("disable-infobars").
+		Set("disable-dev-shm-usage").
+		Set("no-first-run").
+		Set("no-default-browser-check").
+		Set("window-size", fmt.Sprintf("%d,%d", a.config.Viewport.Width, a.config.Viewport.Height)).
 		Headless(a.config.Headless)
 
 	if userDataDir != "" {
