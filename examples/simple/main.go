@@ -61,7 +61,32 @@ func main() {
 
 	// Run a task with natural language
 	fmt.Println("🔍 Running search task...")
-	result, err := agent.Run(ctx, "Search for 'Go programming language' and click on the first result")
+	result, err := agent.Run(ctx, `
+OBJECTIVE: Search for "Go programming language" and navigate to an informational result.
+
+STEPS:
+1. Look for the search input field (usually a textarea or input with placeholder text)
+2. Click on the search field to focus it
+3. Type: Go programming language
+4. Press Enter or click the search button to submit
+5. Wait for search results to load
+6. Look at the search results:
+   - Skip any ads (usually marked as "Ad" or "Sponsored")
+   - Find the first organic/natural result
+   - Prefer results from official sources (go.dev, wikipedia, golang.org)
+7. Click on that result
+8. Wait for the page to load
+
+FALLBACK:
+- If Google shows a CAPTCHA or blocks the request, try using DuckDuckGo (https://duckduckgo.com) instead
+- If no search box is found, the page may have changed - report what you see
+
+SUCCESS CRITERIA:
+- You have navigated to a page about the Go programming language
+- The page is not a search results page
+
+OUTPUT: Report the final URL you landed on and a brief description of the page content.
+`)
 	if err != nil {
 		log.Fatalf("Task failed: %v", err)
 	}

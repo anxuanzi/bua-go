@@ -59,16 +59,41 @@ func main() {
 	// Task 1: Research a topic on Wikipedia
 	fmt.Println("📚 Task 1: Research 'Go programming language' on Wikipedia...")
 	result1, err := agent.Run(ctx, `
-		1. Navigate to https://en.wikipedia.org
-		2. Search for "Go programming language" using the search box
-		3. Click on the main article result
-		4. Extract the following information from the article:
-		   - The first paragraph summary (what is Go?)
-		   - Who designed the language
-		   - When it was first released
-		   - The programming paradigm
-		5. Return the extracted data as JSON
-	`)
+OBJECTIVE: Research the Go programming language on Wikipedia.
+
+STEPS:
+1. Navigate directly to https://en.wikipedia.org/wiki/Go_(programming_language)
+   - This skips the search step and goes straight to the article
+2. Wait for the article to load (look for the article title "Go (programming language)")
+3. Extract information from the article:
+
+   FROM THE INFOBOX (right sidebar):
+   - paradigm: Programming paradigm(s)
+   - designed_by: Designer name(s)
+   - first_appeared: Year of first release
+   - typing_discipline: Type system
+
+   FROM THE ARTICLE TEXT (first 2 paragraphs):
+   - summary: 2-3 sentence description of what Go is
+
+4. If any information is not found, set the value to "Not found"
+
+OUTPUT FORMAT (return as JSON):
+{
+  "source": "Wikipedia",
+  "url": "https://en.wikipedia.org/wiki/Go_(programming_language)",
+  "paradigm": "<paradigm(s)>",
+  "designed_by": "<designer names>",
+  "first_appeared": "<year>",
+  "typing_discipline": "<typing info>",
+  "summary": "<2-3 sentence description>"
+}
+
+CONSTRAINTS:
+- Stay on the Wikipedia article page
+- Do NOT click external links
+- Dismiss any popups (donation banners, etc.) if they appear
+`)
 	if err != nil {
 		log.Fatalf("Task 1 failed: %v", err)
 	}
@@ -77,14 +102,43 @@ func main() {
 	// Task 2: Check GitHub for Go repositories
 	fmt.Println("\n🐙 Task 2: Find popular Go repositories on GitHub...")
 	result2, err := agent.Run(ctx, `
-		1. Navigate to https://github.com
-		2. Search for "golang" in the search box
-		3. Wait for results to load
-		4. Filter or look for repositories (not users or other types)
-		5. Extract the names and descriptions of the top 3 repositories
-		6. For each repository, also get the star count if visible
-		7. Return the data as a JSON array
-	`)
+OBJECTIVE: Find and extract information about popular Go repositories on GitHub.
+
+STEPS:
+1. Navigate to https://github.com/search?q=language%3AGo&type=repositories&s=stars&o=desc
+   - This URL directly shows Go repositories sorted by stars
+2. Wait for results to load (look for repository cards/list items)
+3. For the TOP 3 repositories in the results:
+   - name: Repository name (format: owner/repo)
+   - description: Repository description text
+   - stars: Star count (may be abbreviated like "45.2k")
+   - url: Full GitHub URL to the repository
+
+OUTPUT FORMAT (return as JSON):
+{
+  "source": "GitHub",
+  "search_query": "Go repositories by stars",
+  "repositories": [
+    {
+      "rank": 1,
+      "name": "<owner/repo>",
+      "description": "<description>",
+      "stars": "<star count>",
+      "url": "<github url>"
+    }
+  ]
+}
+
+ERROR HANDLING:
+- If GitHub shows a rate limit message, extract what's visible
+- If fewer than 3 repos appear, return what's available
+- Note any login prompts or restrictions encountered
+
+CONSTRAINTS:
+- Do NOT click into individual repositories
+- Do NOT attempt to log in
+- Extract only from the search results page
+`)
 	if err != nil {
 		log.Fatalf("Task 2 failed: %v", err)
 	}
@@ -93,12 +147,38 @@ func main() {
 	// Task 3: Check Go documentation
 	fmt.Println("\n📖 Task 3: Explore Go official documentation...")
 	result3, err := agent.Run(ctx, `
-		1. Navigate to https://go.dev
-		2. Find and click on the "Learn" or "Docs" section
-		3. Look for the "Getting Started" guide or tutorial
-		4. Extract the main steps or sections listed in the getting started guide
-		5. Return a summary of what someone would learn from this guide
-	`)
+OBJECTIVE: Explore the official Go documentation and learning resources.
+
+STEPS:
+1. Navigate to https://go.dev/learn/
+   - This is the official "Learn Go" page
+2. Wait for the page to load completely
+3. Identify the main learning sections/resources available:
+   - What tutorials or guides are offered?
+   - What is recommended for beginners?
+   - Are there interactive features (playground, tour)?
+4. Extract the structure of available resources
+
+OUTPUT FORMAT (return as JSON):
+{
+  "source": "go.dev",
+  "url": "https://go.dev/learn/",
+  "main_sections": [
+    {
+      "title": "<section title>",
+      "description": "<what this section offers>",
+      "target_audience": "<who it's for>"
+    }
+  ],
+  "beginner_recommendation": "<what's recommended for beginners>",
+  "interactive_features": ["<feature1>", "<feature2>"]
+}
+
+CONSTRAINTS:
+- Stay on the /learn page or immediate child pages
+- Do NOT download any files
+- Focus on understanding the structure, not reading full tutorials
+`)
 	if err != nil {
 		log.Fatalf("Task 3 failed: %v", err)
 	}
