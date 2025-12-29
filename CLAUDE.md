@@ -88,6 +88,17 @@ Each tool uses Input/Output struct pairs with jsonschema tags for parameter desc
 - `element_id`: optional index of scrollable container for modal/popup scrolling
 - Uses `Browser.Scroll()` for page scrolling, `Browser.ScrollInElement()` for container scrolling
 
+### Examples (`examples/`)
+
+| Example | Description |
+|---------|-------------|
+| `simple/` | Basic search example |
+| `scraping/` | Hacker News data extraction |
+| `download/` | File download capabilities |
+| `adk_tool/` | Dual-use architecture demo |
+| `content_research/` | Multi-tab Instagram research |
+| `instagram_comments/` | Comment scraping with modal scrolling (element_id demo) |
+
 ### Dual-Use Architecture (export/adktool.go)
 
 bua-go can be embedded as a tool in other ADK applications:
