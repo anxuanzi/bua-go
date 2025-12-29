@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -263,5 +264,370 @@ func TestObservation_Timestamp(t *testing.T) {
 	}
 	if time.Since(obs[0].Timestamp) > time.Second {
 		t.Error("Timestamp is too old")
+	}
+}
+
+// Additional edge case tests
+
+func TestManager_EmptyConfig(t *testing.T) {
+	// Empty config should use defaults
+	m := NewManager(&Config{})
+	if m == nil {
+		t.Fatal("NewManager(&Config{}) returned nil")
+	}
+	// Should have default limit
+	if m.config.ShortTermLimit != 10 {
+		t.Errorf("Default ShortTermLimit = %d, want 10", m.config.ShortTermLimit)
+	}
+}
+
+func TestManager_SearchLongTermMemory(t *testing.T) {
+	m := NewManager(&Config{})
+
+	// Add various entries
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "login-pattern",
+		Type:    "success",
+		Content: "Click login button works on example.com",
+		Site:    "example.com",
+	})
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "submit-pattern",
+		Type:    "failure",
+		Content: "Submit button not found",
+		Site:    "other.com",
+	})
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "login-other",
+		Type:    "success",
+		Content: "Login successful on another site",
+		Site:    "another.com",
+	})
+
+	// Note: containsKeywords is a placeholder that returns true if both text and query are non-empty
+	// So any non-empty query matches all entries with non-empty content/key
+	tests := []struct {
+		name     string
+		query    string
+		site     string
+		expected int
+	}{
+		// Any non-empty query matches all 3 entries (current placeholder behavior)
+		{"any query matches all with content", "anything", "", 3},
+		// Site filter works: only entries matching site are returned
+		{"site filter with query", "anything", "example.com", 1},
+		{"site filter different site", "anything", "other.com", 1},
+		// Empty query returns nothing (containsKeywords returns false for empty query)
+		{"empty query returns nothing", "", "", 0},
+		{"empty query with site returns nothing", "", "example.com", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := m.SearchLongTermMemory(tt.query, tt.site)
+			if len(results) != tt.expected {
+				t.Errorf("SearchLongTermMemory(%q, %q) = %d results, want %d",
+					tt.query, tt.site, len(results), tt.expected)
+			}
+		})
+	}
+}
+
+func TestManager_LoadNonExistent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bua-memory-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	m := NewManager(&Config{StorageDir: tmpDir})
+	ctx := context.Background()
+
+	// Load from non-existent file should not error
+	err = m.Load(ctx)
+	if err != nil {
+		t.Errorf("Load() from non-existent file should not error, got: %v", err)
+	}
+}
+
+func TestManager_SaveInvalidDir(t *testing.T) {
+	m := NewManager(&Config{StorageDir: "/nonexistent/path/that/should/not/exist"})
+	ctx := context.Background()
+
+	// Save to invalid directory should error
+	err := m.Save(ctx)
+	if err == nil {
+		t.Error("Save() to invalid directory should error")
+	}
+}
+
+func TestManager_ObservationFields(t *testing.T) {
+	m := NewManager(&Config{})
+	m.StartTask("Test task")
+
+	obs := &Observation{
+		URL:   "https://example.com/page",
+		Title: "Example Page",
+		Action: &Action{
+			Type:      "click",
+			Target:    "42",
+			Value:     "button#submit",
+			Reasoning: "Need to submit the form",
+		},
+		Result:         "success",
+		ScreenshotPath: "/tmp/screenshot.png",
+		ElementCount:   100,
+	}
+	m.AddObservation(obs)
+
+	retrieved := m.GetRecentObservations(1)
+	if len(retrieved) != 1 {
+		t.Fatal("Expected 1 observation")
+	}
+
+	r := retrieved[0]
+	if r.URL != "https://example.com/page" {
+		t.Errorf("URL = %q", r.URL)
+	}
+	if r.Title != "Example Page" {
+		t.Errorf("Title = %q", r.Title)
+	}
+	if r.Action == nil {
+		t.Error("Action should not be nil")
+	} else {
+		if r.Action.Type != "click" {
+			t.Errorf("Action.Type = %q", r.Action.Type)
+		}
+		if r.Action.Target != "42" {
+			t.Errorf("Action.Target = %q", r.Action.Target)
+		}
+		if r.Action.Value != "button#submit" {
+			t.Errorf("Action.Value = %q", r.Action.Value)
+		}
+		if r.Action.Reasoning != "Need to submit the form" {
+			t.Errorf("Action.Reasoning = %q", r.Action.Reasoning)
+		}
+	}
+	if r.Result != "success" {
+		t.Errorf("Result = %q", r.Result)
+	}
+	if r.ScreenshotPath != "/tmp/screenshot.png" {
+		t.Errorf("ScreenshotPath = %q", r.ScreenshotPath)
+	}
+	if r.ElementCount != 100 {
+		t.Errorf("ElementCount = %d", r.ElementCount)
+	}
+}
+
+func TestManager_LongTermEntry_AccessCount(t *testing.T) {
+	m := NewManager(&Config{})
+
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "test-key",
+		Content: "Test content",
+	})
+
+	// Access multiple times
+	for i := 0; i < 5; i++ {
+		_, _ = m.GetLongTermMemory("test-key")
+	}
+
+	got, _ := m.GetLongTermMemory("test-key")
+	if got.AccessCount != 6 { // 5 + 1 from this call
+		t.Errorf("AccessCount = %d, want 6", got.AccessCount)
+	}
+}
+
+func TestManager_LongTermEntry_AccessedAt(t *testing.T) {
+	m := NewManager(&Config{})
+
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "test-key",
+		Content: "Test content",
+	})
+
+	time.Sleep(10 * time.Millisecond)
+	before := time.Now()
+
+	m.GetLongTermMemory("test-key")
+
+	got, _ := m.GetLongTermMemory("test-key")
+	if got.AccessedAt.Before(before) {
+		t.Error("AccessedAt was not updated")
+	}
+}
+
+func TestManager_OverwriteLongTermEntry(t *testing.T) {
+	m := NewManager(&Config{})
+
+	// Add initial entry
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "test-key",
+		Content: "Original content",
+	})
+
+	// Overwrite with same key
+	m.AddLongTermMemory(&LongTermEntry{
+		Key:     "test-key",
+		Content: "Updated content",
+	})
+
+	got, ok := m.GetLongTermMemory("test-key")
+	if !ok {
+		t.Fatal("Entry not found")
+	}
+	if got.Content != "Updated content" {
+		t.Errorf("Content = %q, want 'Updated content'", got.Content)
+	}
+}
+
+func TestManager_ObservationCompaction(t *testing.T) {
+	m := NewManager(&Config{ShortTermLimit: 3})
+	m.StartTask("Test task")
+
+	// Add more than the limit
+	for i := 0; i < 10; i++ {
+		m.AddObservation(&Observation{
+			URL:   "https://example.com",
+			Title: "Test",
+		})
+	}
+
+	obs := m.GetRecentObservations(0)
+	if len(obs) > 3 {
+		t.Errorf("Observations not compacted: got %d, want <= 3", len(obs))
+	}
+}
+
+func TestManager_GetTaskContext_Empty(t *testing.T) {
+	m := NewManager(&Config{})
+
+	// Without starting a task
+	ctx := m.GetTaskContext()
+	if ctx != "" {
+		t.Errorf("GetTaskContext() without StartTask should return empty, got %q", ctx)
+	}
+}
+
+func TestManager_ConcurrentOperations(t *testing.T) {
+	m := NewManager(&Config{ShortTermLimit: 100})
+	m.StartTask("Concurrent test")
+
+	const numGoroutines = 50
+	const opsPerGoroutine = 20
+
+	var wg sync.WaitGroup
+
+	// Concurrent observation writes
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				m.AddObservation(&Observation{
+					URL:   "https://example.com",
+					Title: "Concurrent test",
+				})
+			}
+		}(i)
+	}
+
+	// Concurrent long-term writes
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				key := "key-" + time.Now().String() + "-" + string(rune(id)) + "-" + string(rune(j))
+				m.AddLongTermMemory(&LongTermEntry{
+					Key:     key,
+					Content: "Test",
+				})
+			}
+		}(i)
+	}
+
+	// Concurrent reads
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < opsPerGoroutine; j++ {
+				_ = m.GetRecentObservations(10)
+				_ = m.SearchLongTermMemory("test", "")
+				_ = m.Stats()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Should not panic and should have data
+	stats := m.Stats()
+	if stats.LongTermCount == 0 {
+		t.Error("Expected some long-term entries after concurrent writes")
+	}
+}
+
+// Benchmarks
+
+func BenchmarkAddObservation(b *testing.B) {
+	m := NewManager(&Config{ShortTermLimit: 100})
+	m.StartTask("Benchmark")
+	obs := &Observation{URL: "test", Title: "Test"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.AddObservation(obs)
+	}
+}
+
+func BenchmarkGetRecentObservations(b *testing.B) {
+	m := NewManager(&Config{ShortTermLimit: 100})
+	m.StartTask("Benchmark")
+	for i := 0; i < 100; i++ {
+		m.AddObservation(&Observation{URL: "test", Title: "Test"})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.GetRecentObservations(10)
+	}
+}
+
+func BenchmarkSearchLongTermMemory(b *testing.B) {
+	m := NewManager(&Config{})
+	for i := 0; i < 100; i++ {
+		m.AddLongTermMemory(&LongTermEntry{
+			Key:     "key-" + string(rune(i)),
+			Content: "Test content with various words for searching",
+			Site:    "example.com",
+		})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.SearchLongTermMemory("content", "example.com")
+	}
+}
+
+func BenchmarkSaveLoad(b *testing.B) {
+	tmpDir, _ := os.MkdirTemp("", "bua-memory-bench")
+	defer os.RemoveAll(tmpDir)
+
+	m := NewManager(&Config{StorageDir: tmpDir})
+	for i := 0; i < 50; i++ {
+		m.AddLongTermMemory(&LongTermEntry{
+			Key:     "key-" + string(rune(i)),
+			Content: "Test content",
+		})
+	}
+
+	ctx := context.Background()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = m.Save(ctx)
+		_ = m.Load(ctx)
 	}
 }
