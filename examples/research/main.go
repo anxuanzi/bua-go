@@ -40,6 +40,7 @@ func main() {
 	// the agent will automatically retry after the suggested delay.
 	//
 	// Token presets available:
+	//   bua.TokenPresetTextOnly  - No screenshots, fastest (~5-15K/page)
 	//   bua.TokenPresetEfficient - Minimize tokens (~15-25K/page)
 	//   bua.TokenPresetBalanced  - Default balance (~25-40K/page)
 	//   bua.TokenPresetQuality   - Higher quality (~40-60K/page)
@@ -51,10 +52,10 @@ func main() {
 		Headless:        false, // Show browser for debugging
 		Viewport:        bua.DesktopViewport,
 		Debug:           true,
-		ShowAnnotations: true, // Set to false to reduce token usage
+		ShowAnnotations: false, // Disable annotations for research tasks
 	}
-	// Apply token preset - use Quality for complex research tasks
-	cfg.ApplyTokenPreset(bua.TokenPresetQuality)
+	// Apply token preset - use TextOnly for fast text extraction (no screenshots)
+	cfg.ApplyTokenPreset(bua.TokenPresetTextOnly)
 
 	// Create the agent
 	agent, err := bua.New(cfg)

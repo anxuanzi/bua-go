@@ -62,6 +62,11 @@ type Config struct {
 	// Lower = smaller file but more artifacts. 60 is good balance.
 	ScreenshotQuality int
 
+	// TextOnly disables all screenshot capture for faster, lower-token operation.
+	// When enabled, the agent relies only on element map text data.
+	// Best for: text extraction, form filling, simple navigation where visual context isn't needed.
+	TextOnly bool
+
 	// Verification configures action verification behavior.
 	Verification *VerificationConfig
 }
@@ -232,7 +237,8 @@ func (a *BrowserAgent) saveScreenshotToFile(data []byte, filename string) {
 // captureScreenshotForResponse captures a compressed screenshot for tool response in smart mode.
 // Returns base64-encoded JPEG if smart mode is enabled, empty string otherwise.
 func (a *BrowserAgent) captureScreenshotForResponse() string {
-	if a.config.ScreenshotMode != "smart" {
+	// Skip screenshot capture in TextOnly mode or non-smart mode
+	if a.config.TextOnly || a.config.ScreenshotMode != "smart" {
 		return ""
 	}
 
@@ -658,8 +664,15 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		output.ElementMap = elements.ToTokenStringLimited(maxElements)
 		a.logger.PageState(output.URL, output.Title, elements.Count())
 
+		// Determine if screenshot should be captured
+		// Skip if: TextOnly mode OR ExcludeScreenshot explicitly set to true
+		excludeScreenshot := a.config.TextOnly
+		if input.ExcludeScreenshot != nil && *input.ExcludeScreenshot {
+			excludeScreenshot = true
+		}
+
 		// Capture screenshot if not excluded
-		if !input.ExcludeScreenshot {
+		if !excludeScreenshot {
 			// Show annotations if enabled (for screenshot only)
 			if a.config.ShowAnnotations {
 				if err := a.browser.ShowAnnotations(bgCtx, elements, nil); err != nil {
@@ -1234,7 +1247,8 @@ type WaitOutput struct {
 }
 
 type GetPageStateInput struct {
-	ExcludeScreenshot bool `json:"exclude_screenshot" jsonschema:"Set to true to skip screenshot capture (default false = include screenshot)"`
+	// ExcludeScreenshot skips screenshot capture when true (optional, defaults to false).
+	ExcludeScreenshot *bool `json:"exclude_screenshot,omitempty" jsonschema:"description=Set to true to skip screenshot capture for faster response. Default is false (include screenshot)."`
 }
 
 type GetPageStateOutput struct {

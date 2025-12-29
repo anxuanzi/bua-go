@@ -89,6 +89,12 @@ type Config struct {
 	// Lower = smaller file but more artifacts. 60 is good balance.
 	// Increase this for better image quality on larger context models.
 	ScreenshotQuality int
+
+	// TextOnly disables all screenshot capture for faster, lower-token operation.
+	// When enabled, the agent relies only on element map text data.
+	// Best for: text extraction, form filling, simple navigation where visual context isn't needed.
+	// Provides significant speed improvement (no screenshot capture/encoding overhead).
+	TextOnly bool
 }
 
 // Viewport defines browser viewport dimensions.
@@ -117,6 +123,8 @@ type TokenPreset struct {
 	ScreenshotMaxWidth int
 	// ScreenshotQuality is JPEG quality (1-100).
 	ScreenshotQuality int
+	// TextOnly disables screenshots entirely for fastest operation.
+	TextOnly bool
 }
 
 // Token management presets for different use cases.
@@ -158,6 +166,17 @@ var (
 		ScreenshotMaxWidth: 1280,
 		ScreenshotQuality:  85,
 	}
+
+	// TokenPresetTextOnly disables screenshots for fastest, lowest-token operation.
+	// Best for: Text extraction, form filling, simple navigation, high-speed scraping.
+	// ~5-15K tokens per page state (element map only, no screenshots).
+	// Significant speed improvement - no screenshot capture/encoding overhead.
+	TokenPresetTextOnly = &TokenPreset{
+		MaxElements:        200,
+		ScreenshotMaxWidth: 0, // Not used
+		ScreenshotQuality:  0, // Not used
+		TextOnly:           true,
+	}
 )
 
 // ApplyTokenPreset applies a token preset to the config.
@@ -168,6 +187,7 @@ func (c *Config) ApplyTokenPreset(preset *TokenPreset) {
 	c.MaxElements = preset.MaxElements
 	c.ScreenshotMaxWidth = preset.ScreenshotMaxWidth
 	c.ScreenshotQuality = preset.ScreenshotQuality
+	c.TextOnly = preset.TextOnly
 }
 
 // Gemini model constants for convenience.
@@ -370,6 +390,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		MaxElements:        a.config.MaxElements,
 		ScreenshotMaxWidth: a.config.ScreenshotMaxWidth,
 		ScreenshotQuality:  a.config.ScreenshotQuality,
+		TextOnly:           a.config.TextOnly,
 	}, a.browser)
 
 	if err := a.browserAgent.Init(ctx); err != nil {

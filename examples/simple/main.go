@@ -36,6 +36,7 @@ func main() {
 		ShowAnnotations: true, // Show element annotations
 	}
 	// Optional: Apply token preset (default is Balanced)
+	// cfg.ApplyTokenPreset(bua.TokenPresetTextOnly)  // Fastest, no screenshots
 	// cfg.ApplyTokenPreset(bua.TokenPresetEfficient) // For cost savings
 	// cfg.ApplyTokenPreset(bua.TokenPresetQuality)   // For complex tasks
 
