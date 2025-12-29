@@ -35,15 +35,21 @@ func main() {
 		log.Fatal("GOOGLE_API_KEY environment variable is required")
 	}
 
-	// Create agent configuration with all features enabled
+	// Create agent configuration
+	// NOTE: This example is token-intensive. If you hit rate limits (429 errors),
+	// the agent will automatically retry after the suggested delay.
+	// To reduce token usage:
+	//   - Set ShowAnnotations: false (disables screenshots saved to disk)
+	//   - Use smaller viewport
+	//   - Add delays between tasks
 	cfg := bua.Config{
 		APIKey:          apiKey,
-		Model:           "gemini-3-flash-preview", // Latest model with 1M input, 65K output
+		Model:           "gemini-2.0-flash", // Use stable model
 		ProfileName:     "research",
 		Headless:        false, // Show browser for debugging
 		Viewport:        bua.DesktopViewport,
 		Debug:           true,
-		ShowAnnotations: true,
+		ShowAnnotations: true, // Set to false to reduce token usage
 	}
 
 	// Create the agent
@@ -146,6 +152,10 @@ CONSTRAINTS:
 	}
 	printResult("Wikipedia Research", result1)
 
+	// Add delay between tasks to avoid rate limiting
+	fmt.Println("⏳ Waiting 10s before next task (rate limit protection)...")
+	time.Sleep(10 * time.Second)
+
 	// ═══════════════════════════════════════════════════════════════════
 	// TASK 2: GitHub Repository Analysis
 	// ═══════════════════════════════════════════════════════════════════
@@ -224,6 +234,10 @@ CONSTRAINTS:
 	}
 	printResult("GitHub Analysis", result2)
 
+	// Add delay between tasks to avoid rate limiting
+	fmt.Println("⏳ Waiting 10s before next task (rate limit protection)...")
+	time.Sleep(10 * time.Second)
+
 	// ═══════════════════════════════════════════════════════════════════
 	// TASK 3: Official Documentation Structure
 	// ═══════════════════════════════════════════════════════════════════
@@ -294,6 +308,10 @@ CONSTRAINTS:
 		log.Printf("Task 3 error: %v", err)
 	}
 	printResult("Documentation Analysis", result3)
+
+	// Add delay between tasks to avoid rate limiting
+	fmt.Println("⏳ Waiting 10s before next task (rate limit protection)...")
+	time.Sleep(10 * time.Second)
 
 	// ═══════════════════════════════════════════════════════════════════
 	// TASK 4: Community & Ecosystem (Crates.io)
@@ -371,6 +389,10 @@ CONSTRAINTS:
 		log.Printf("Task 4 error: %v", err)
 	}
 	printResult("Ecosystem Analysis", result4)
+
+	// Add delay between tasks to avoid rate limiting
+	fmt.Println("⏳ Waiting 10s before next task (rate limit protection)...")
+	time.Sleep(10 * time.Second)
 
 	// ═══════════════════════════════════════════════════════════════════
 	// TASK 5: Comparative Analysis with Similar Language

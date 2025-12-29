@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -378,6 +381,25 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				result.Success = false
 				result.Error = "agent did not complete task (no done() call)"
 				break
+			}
+			// Check for rate limiting (429) and retry with backoff
+			if delay, isRateLimit := parseRateLimitDelay(err.Error()); isRateLimit {
+				if a.config.Debug {
+					fmt.Printf("[DEBUG] Rate limited, waiting %v before retry...\n", delay)
+				}
+				// Wait for the suggested delay plus a small buffer
+				select {
+				case <-ctx.Done():
+					result.Success = false
+					result.Error = "context cancelled while waiting for rate limit"
+					return result, nil
+				case <-time.After(delay + 2*time.Second):
+				}
+				// Recursive retry - will create a new session
+				if a.config.Debug {
+					fmt.Printf("[DEBUG] Retrying after rate limit...\n")
+				}
+				return a.Run(ctx, prompt)
 			}
 			result.Success = false
 			result.Error = err.Error()
@@ -772,4 +794,34 @@ func (a *Agent) GetFindings() []map[string]any {
 	}
 
 	return a.browserAgent.GetFindings()
+}
+
+// parseRateLimitDelay extracts the retry delay from a 429 rate limit error message.
+// Returns the delay duration and true if this is a rate limit error, otherwise 0 and false.
+func parseRateLimitDelay(errMsg string) (time.Duration, bool) {
+	// Check if this is a rate limit error
+	if !strings.Contains(errMsg, "429") && !strings.Contains(errMsg, "RESOURCE_EXHAUSTED") {
+		return 0, false
+	}
+
+	// Try to extract retry delay from message like "Please retry in 29.924233789s."
+	re := regexp.MustCompile(`retry in (\d+(?:\.\d+)?)s`)
+	matches := re.FindStringSubmatch(errMsg)
+	if len(matches) >= 2 {
+		if seconds, err := strconv.ParseFloat(matches[1], 64); err == nil {
+			return time.Duration(seconds*1000) * time.Millisecond, true
+		}
+	}
+
+	// Also try "retryDelay:XXs" format from Details
+	re2 := regexp.MustCompile(`retryDelay:(\d+)s`)
+	matches2 := re2.FindStringSubmatch(errMsg)
+	if len(matches2) >= 2 {
+		if seconds, err := strconv.Atoi(matches2[1]); err == nil {
+			return time.Duration(seconds) * time.Second, true
+		}
+	}
+
+	// Default to 30 seconds if we can't parse
+	return 30 * time.Second, true
 }

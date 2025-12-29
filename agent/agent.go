@@ -542,7 +542,8 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 			return NavigateOutput{Success: false, Message: "Browser not initialized"}, nil
 		}
 
-		a.preAction()
+		// Skip preAction for navigate - no meaningful state to capture before loading a new URL
+		// postAction will still clean up any annotations from previous actions
 		defer a.postAction()
 
 		a.logger.Navigate(input.URL)
