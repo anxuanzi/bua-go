@@ -54,51 +54,9 @@ func main() {
 		log.Fatalf("Failed to start agent: %v", err)
 	}
 
-	// Example: Scrape Hacker News top stories
+	// Example: Scrape Hacker News top stories - short autonomous prompt!
 	fmt.Println("📰 Scraping Hacker News top stories...")
-	result, err := agent.Run(ctx, `
-OBJECTIVE: Extract the top 5 stories from Hacker News with their metadata.
-
-STEPS:
-1. Navigate to https://news.ycombinator.com
-2. Wait for the page to fully load (look for the orange header bar)
-3. Identify the story list structure:
-   - Each story has a title link (class "titleline" or similar)
-   - Below each title is metadata: points, author, time, comments
-4. For each of the TOP 5 stories (numbered 1-5 on the left), extract:
-   - title: The story headline text
-   - url: The href of the title link (may be external or internal)
-   - points: Number of points/upvotes (e.g., "142 points")
-   - comments: Number of comments (e.g., "89 comments")
-   - posted_by: Username who posted it
-5. Scroll if needed to see all 5 stories (they should all be visible)
-
-OUTPUT FORMAT (return as JSON):
-{
-  "source": "Hacker News",
-  "scraped_at": "<current page title or time>",
-  "stories": [
-    {
-      "rank": 1,
-      "title": "<story title>",
-      "url": "<story URL>",
-      "points": "<number>",
-      "comments": "<number>",
-      "posted_by": "<username>"
-    }
-  ]
-}
-
-ERROR HANDLING:
-- If a field is not visible, set it to "N/A"
-- If fewer than 5 stories exist, return what's available
-- If the page structure is different than expected, describe what you see
-
-CONSTRAINTS:
-- Do NOT click on any stories
-- Do NOT navigate away from the main page
-- Extract data only from what's visible on the homepage
-`)
+	result, err := agent.Run(ctx, `Go to https://news.ycombinator.com and extract the top 5 stories with their title, url, points, and number of comments.`)
 	if err != nil {
 		log.Fatalf("Task failed: %v", err)
 	}
