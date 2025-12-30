@@ -68,11 +68,12 @@ type Config struct {
 
 // BrowserAgent wraps an ADK agent with browser automation capabilities.
 type BrowserAgent struct {
-	config   Config
-	browser  *browser.Browser
-	adkAgent agent.Agent
-	logger   *Logger
-	tools    []tool.Tool
+	config    Config
+	browser   *browser.Browser
+	adkAgent  agent.Agent
+	logger    *Logger
+	tools     []tool.Tool
+	tokenizer *Tokenizer
 }
 
 // New creates a new browser agent.
@@ -100,6 +101,19 @@ func (a *BrowserAgent) Init(ctx context.Context) error {
 	apiKey := a.config.APIKey
 	if apiKey == "" {
 		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+
+	// Create tokenizer for accurate token counting
+	tokenizer, err := NewTokenizer(ctx, TokenizerConfig{
+		APIKey:    apiKey,
+		Model:     a.config.Model,
+		MaxTokens: a.config.MaxTokens,
+	})
+	if err != nil {
+		// Non-fatal: fall back to estimation if tokenizer fails
+		a.logger.Info("Warning: tokenizer init failed, using estimation: %v", err)
+	} else {
+		a.tokenizer = tokenizer
 	}
 
 	// Create Gemini model
@@ -269,22 +283,34 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 		a.preAction()
 		defer a.postAction()
 
-		a.logger.Click(input.ElementIndex, input.Reasoning)
+		var err error
+		var msg string
 
-		err := a.browser.Click(bgCtx, input.ElementIndex)
+		// Check if using coordinates or element index
+		if input.X > 0 && input.Y > 0 {
+			// Coordinate-based click
+			a.logger.Click(0, fmt.Sprintf("at (%d,%d): %s", int(input.X), int(input.Y), input.Reasoning))
+			err = a.browser.ClickAt(bgCtx, input.X, input.Y)
+			msg = fmt.Sprintf("Clicked at coordinates (%d, %d)", int(input.X), int(input.Y))
+		} else {
+			// Element-index click
+			a.logger.Click(input.ElementIndex, input.Reasoning)
+			err = a.browser.Click(bgCtx, input.ElementIndex)
+			msg = fmt.Sprintf("Clicked element %d", input.ElementIndex)
+		}
+
 		if err != nil {
 			a.logger.ActionResult(false, err.Error())
 			return ClickOutput{Success: false, Message: err.Error()}, nil
 		}
 
-		msg := fmt.Sprintf("Clicked element %d", input.ElementIndex)
 		a.logger.ActionResult(true, msg)
 		return ClickOutput{Success: true, Message: msg, Screenshot: a.captureScreenshotForResponse()}, nil
 	}
 	clickTool, err := functiontool.New(
 		functiontool.Config{
 			Name:        "click",
-			Description: "Click on an element by its index number shown in the annotated screenshot and element map.",
+			Description: "Click on an element by its index number or at specific coordinates. Use element_index when an element is visible in the element map. Use x,y coordinates as a fallback when element detection fails or for precise positioning.",
 		},
 		clickHandler,
 	)
@@ -811,8 +837,10 @@ func sanitizeFilename(s string) string {
 // Tool input/output types
 
 type ClickInput struct {
-	ElementIndex int    `json:"element_index" jsonschema:"The index number of the element to click (shown in the element map)"`
-	Reasoning    string `json:"reasoning" jsonschema:"Brief explanation of why you're clicking this element"`
+	ElementIndex int     `json:"element_index,omitempty" jsonschema:"The index number of the element to click (shown in the element map). Use this OR coordinates, not both."`
+	X            float64 `json:"x,omitempty" jsonschema:"X coordinate for clicking at specific position (use when element detection fails)"`
+	Y            float64 `json:"y,omitempty" jsonschema:"Y coordinate for clicking at specific position (use when element detection fails)"`
+	Reasoning    string  `json:"reasoning" jsonschema:"Brief explanation of why you're clicking this element or position"`
 }
 
 type ClickOutput struct {
@@ -993,6 +1021,23 @@ func (a *BrowserAgent) GetLogger() *Logger {
 	return a.logger
 }
 
+// GetTokenizer returns the tokenizer for accurate token counting.
+// May return nil if tokenizer initialization failed.
+func (a *BrowserAgent) GetTokenizer() *Tokenizer {
+	return a.tokenizer
+}
+
+// CountTokens returns the token count for text using the tokenizer.
+// Falls back to estimation if tokenizer is unavailable.
+func (a *BrowserAgent) CountTokens(ctx context.Context, text string) int {
+	if a.tokenizer != nil {
+		count, _ := a.tokenizer.CountTextTokens(ctx, text)
+		return count
+	}
+	// Fall back to estimation
+	return a.logger.tokens.EstimateTextTokens(text)
+}
+
 // Result represents the result of a task execution.
 type Result struct {
 	Success         bool
@@ -1004,12 +1049,37 @@ type Result struct {
 }
 
 // Step represents a single step in the execution.
+// Modeled after browser-use's AgentOutput for rich reasoning capture.
 type Step struct {
-	Action         string
-	Target         string
-	Reasoning      string
-	URL            string
-	Title          string
+	// Action is the action taken (e.g., "click", "type", "scroll").
+	Action string
+
+	// Target describes what element was targeted.
+	Target string
+
+	// Thinking captures the model's assessment of the current state before acting.
+	// This is extracted from the model's text output before the tool call.
+	Thinking string
+
+	// Evaluation captures how the model evaluated the previous action's result.
+	Evaluation string
+
+	// NextGoal describes what the model is trying to achieve with this action.
+	NextGoal string
+
+	// Reasoning is the brief explanation from the tool's reasoning parameter.
+	Reasoning string
+
+	// Memory captures any important context the agent wants to remember.
+	Memory string
+
+	// URL is the page URL at the time of this step.
+	URL string
+
+	// Title is the page title at the time of this step.
+	Title string
+
+	// ScreenshotPath is the path to the screenshot taken after this step.
 	ScreenshotPath string
 }
 

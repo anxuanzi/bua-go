@@ -30,70 +30,135 @@ import (
 	"github.com/anxuanzi/bua-go/screenshot"
 )
 
+// Preset defines pre-configured settings for different use cases.
+// Use presets instead of manually configuring screenshot/token settings.
+type Preset string
+
+const (
+	// PresetFast uses text-only mode for maximum speed and lowest token usage.
+	// Best for: text extraction, form filling, simple navigation.
+	// ~5-15K tokens per page state.
+	PresetFast Preset = "fast"
+
+	// PresetEfficient minimizes token usage while keeping basic vision.
+	// Best for: high-volume automation, cost-sensitive use cases.
+	// ~15-25K tokens per page state.
+	PresetEfficient Preset = "efficient"
+
+	// PresetBalanced is the default - good balance of quality and tokens.
+	// Best for: most automation tasks, general web browsing.
+	// ~25-40K tokens per page state.
+	PresetBalanced Preset = "balanced"
+
+	// PresetQuality provides higher quality for complex visual tasks.
+	// Best for: complex UIs, visual verification, data-heavy pages.
+	// ~40-60K tokens per page state.
+	PresetQuality Preset = "quality"
+
+	// PresetMax provides maximum quality when token budget is not a concern.
+	// Best for: debugging, maximum accuracy needed.
+	// ~60-100K tokens per page state.
+	PresetMax Preset = "max"
+)
+
 // Config holds the configuration for creating a new Agent.
+//
+// Only APIKey is required - everything else has sensible defaults.
+//
+// # Simple usage (recommended for most cases):
+//
+//	agent, _ := bua.New(bua.Config{APIKey: "your-key"})
+//
+// # With preset for specific needs:
+//
+//	agent, _ := bua.New(bua.Config{
+//	    APIKey: "your-key",
+//	    Preset: bua.PresetFast,  // Fast text-only mode
+//	})
+//
+// # For debugging:
+//
+//	agent, _ := bua.New(bua.Config{
+//	    APIKey:   "your-key",
+//	    Debug:    true,
+//	    Headless: false,
+//	})
 type Config struct {
+	//
+	// === REQUIRED ===
+	//
+
 	// APIKey is the API key for the LLM provider (e.g., Gemini API key).
 	APIKey string
 
-	// Model is the model ID to use (e.g., "gemini-3-flash-preview").
+	//
+	// === COMMONLY USED (all have sensible defaults) ===
+	//
+
+	// Model is the model ID to use. Default: "gemini-3-flash-preview"
 	Model string
 
-	// ProfileName is the name of the browser profile to use for session persistence.
-	// If empty, a temporary profile is created and cleaned up after the session.
-	ProfileName string
-
-	// ProfileDir is the base directory for storing browser profiles.
-	// Defaults to ~/.bua/profiles if empty.
-	ProfileDir string
-
-	// Headless determines whether the browser runs in headless mode.
-	// Set to false for debugging or when human takeover is needed.
+	// Headless runs browser without visible window. Default: false
 	Headless bool
 
-	// Viewport sets the browser viewport size.
-	// Defaults to DesktopViewport if nil.
-	Viewport *Viewport
-
-	// ScreenshotConfig configures screenshot capture and storage.
-	ScreenshotConfig *screenshot.Config
-
-	// MaxTokens is the maximum context window size for the LLM.
-	// Used for token management and conversation compaction.
-	// Defaults to 1048576 if zero.
-	MaxTokens int
-
-	// Debug enables verbose logging.
+	// Debug enables verbose logging. Default: false
 	Debug bool
 
-	// ShowAnnotations enables visual element annotations in the browser.
-	// When enabled, annotations are shown before each action for debugging.
-	// Also captures annotated screenshots for each step.
+	// Preset controls screenshot quality and token usage. Default: PresetBalanced
+	// Options: PresetFast, PresetEfficient, PresetBalanced, PresetQuality, PresetMax
+	Preset Preset
+
+	//
+	// === BROWSER OPTIONS ===
+	//
+
+	// Viewport sets browser viewport size. Default: DesktopViewport (1280x800)
+	Viewport *Viewport
+
+	// ProfileName enables session persistence with cookies/localStorage.
+	// Empty = temporary profile (cleaned up on close).
+	ProfileName string
+
+	// ProfileDir is base directory for browser profiles. Default: ~/.bua/profiles
+	ProfileDir string
+
+	//
+	// === VISUAL DEBUGGING ===
+	//
+
+	// ShowAnnotations draws element indices on the page for debugging.
 	ShowAnnotations bool
 
-	// ScreenshotMode controls when screenshots are sent to the model.
-	// "normal" (default): Only in get_page_state responses
-	// "smart": After each action AND in get_page_state responses (higher token usage but better awareness)
+	// ShowHighlights shows visual feedback for actions (clicks, scrolls).
+	// Default: true when not headless, false when headless.
+	ShowHighlights *bool
+
+	// HighlightDelay is how long to show action highlights. Default: 300ms
+	HighlightDelay time.Duration
+
+	//
+	// === ADVANCED (rarely needed - Preset handles these) ===
+	//
+
+	// ScreenshotConfig for custom screenshot storage. Usually not needed.
+	ScreenshotConfig *screenshot.Config
+
+	// MaxTokens is LLM context window size. Default: 1048576 (1M)
+	MaxTokens int
+
+	// ScreenshotMode: "normal" (default) or "smart" (screenshot after each action).
 	ScreenshotMode string
 
-	// MaxElements limits elements sent to LLM (default 150, 0 = no limit).
-	// Critical for staying within context limits - 500 elements can use 50K+ tokens.
-	// Increase this if using a model with larger context window.
+	// MaxElements limits elements sent to LLM. Set by Preset, rarely needs override.
 	MaxElements int
 
-	// ScreenshotMaxWidth is the max width for LLM screenshots (default 800).
-	// Smaller = fewer tokens. 800px is readable while being ~10x smaller than full size.
-	// Increase this for better visual quality on larger context models.
+	// ScreenshotMaxWidth for LLM screenshots. Set by Preset, rarely needs override.
 	ScreenshotMaxWidth int
 
-	// ScreenshotQuality is JPEG quality for LLM screenshots (default 60, range 1-100).
-	// Lower = smaller file but more artifacts. 60 is good balance.
-	// Increase this for better image quality on larger context models.
+	// ScreenshotQuality (1-100) for LLM screenshots. Set by Preset, rarely needs override.
 	ScreenshotQuality int
 
-	// TextOnly disables all screenshot capture for faster, lower-token operation.
-	// When enabled, the agent relies only on element map text data.
-	// Best for: text extraction, form filling, simple navigation where visual context isn't needed.
-	// Provides significant speed improvement (no screenshot capture/encoding overhead).
+	// TextOnly disables screenshots entirely. Use Preset: PresetFast instead.
 	TextOnly bool
 }
 
@@ -116,70 +181,45 @@ var (
 )
 
 // TokenPreset defines token management settings for different use cases.
+//
+// Deprecated: Use the Preset field in Config instead.
+// Migration: TokenPresetTextOnly -> Preset: PresetFast
+//
+//	TokenPresetEfficient -> Preset: PresetEfficient
+//	TokenPresetBalanced -> Preset: PresetBalanced (or just omit, it's the default)
+//	TokenPresetQuality -> Preset: PresetQuality
+//	TokenPresetMaximum -> Preset: PresetMax
 type TokenPreset struct {
-	// MaxElements limits interactive elements sent to LLM.
-	MaxElements int
-	// ScreenshotMaxWidth is the max width for LLM screenshots.
+	MaxElements        int
 	ScreenshotMaxWidth int
-	// ScreenshotQuality is JPEG quality (1-100).
-	ScreenshotQuality int
-	// TextOnly disables screenshots entirely for fastest operation.
-	TextOnly bool
+	ScreenshotQuality  int
+	TextOnly           bool
 }
 
-// Token management presets for different use cases.
-// All Gemini 2.x/3.x models have 1M token context, so presets are based on
-// use case rather than model size.
+// Deprecated: Use Preset field in Config instead of these variables.
+// These are kept for backward compatibility only.
 var (
-	// TokenPresetEfficient minimizes token usage for cost savings.
-	// Best for: Simple tasks, high-volume automation, cost-sensitive use cases.
-	// ~15-25K tokens per page state.
-	TokenPresetEfficient = &TokenPreset{
-		MaxElements:        100,
-		ScreenshotMaxWidth: 640,
-		ScreenshotQuality:  50,
-	}
-
-	// TokenPresetBalanced is the default balance between quality and token usage.
-	// Best for: Most automation tasks, general web browsing.
-	// ~25-40K tokens per page state.
-	TokenPresetBalanced = &TokenPreset{
-		MaxElements:        150,
-		ScreenshotMaxWidth: 800,
-		ScreenshotQuality:  60,
-	}
-
-	// TokenPresetQuality provides higher quality for complex visual tasks.
-	// Best for: Complex UIs, data-heavy pages, visual verification tasks.
-	// ~40-60K tokens per page state.
-	TokenPresetQuality = &TokenPreset{
-		MaxElements:        250,
-		ScreenshotMaxWidth: 1024,
-		ScreenshotQuality:  75,
-	}
-
-	// TokenPresetMaximum provides full quality when token budget is not a concern.
-	// Best for: Debugging, complex multi-step tasks, maximum accuracy needed.
-	// ~60-100K tokens per page state.
-	TokenPresetMaximum = &TokenPreset{
-		MaxElements:        400,
-		ScreenshotMaxWidth: 1280,
-		ScreenshotQuality:  85,
-	}
-
-	// TokenPresetTextOnly disables screenshots for fastest, lowest-token operation.
-	// Best for: Text extraction, form filling, simple navigation, high-speed scraping.
-	// ~5-15K tokens per page state (element map only, no screenshots).
-	// Significant speed improvement - no screenshot capture/encoding overhead.
-	TokenPresetTextOnly = &TokenPreset{
-		MaxElements:        200,
-		ScreenshotMaxWidth: 0, // Not used
-		ScreenshotQuality:  0, // Not used
-		TextOnly:           true,
-	}
+	// Deprecated: Use Preset: PresetEfficient instead.
+	TokenPresetEfficient = &TokenPreset{MaxElements: 100, ScreenshotMaxWidth: 640, ScreenshotQuality: 50}
+	// Deprecated: Use Preset: PresetBalanced instead (or just omit, it's the default).
+	TokenPresetBalanced = &TokenPreset{MaxElements: 150, ScreenshotMaxWidth: 800, ScreenshotQuality: 60}
+	// Deprecated: Use Preset: PresetQuality instead.
+	TokenPresetQuality = &TokenPreset{MaxElements: 250, ScreenshotMaxWidth: 1024, ScreenshotQuality: 75}
+	// Deprecated: Use Preset: PresetMax instead.
+	TokenPresetMaximum = &TokenPreset{MaxElements: 400, ScreenshotMaxWidth: 1280, ScreenshotQuality: 85}
+	// Deprecated: Use Preset: PresetFast instead.
+	TokenPresetTextOnly = &TokenPreset{MaxElements: 200, TextOnly: true}
 )
 
 // ApplyTokenPreset applies a token preset to the config.
+//
+// Deprecated: Use the Preset field in Config instead.
+//
+//	// Old way:
+//	cfg.ApplyTokenPreset(bua.TokenPresetTextOnly)
+//
+//	// New way (simpler):
+//	cfg := bua.Config{APIKey: key, Preset: bua.PresetFast}
 func (c *Config) ApplyTokenPreset(preset *TokenPreset) {
 	if preset == nil {
 		return
@@ -231,6 +271,7 @@ type Result struct {
 }
 
 // Step represents a single step in the task execution.
+// Modeled after browser-use's AgentOutput for rich reasoning capture.
 type Step struct {
 	// Action is the action taken (e.g., "click", "type", "scroll").
 	Action string
@@ -238,8 +279,21 @@ type Step struct {
 	// Target describes what element was targeted.
 	Target string
 
-	// Reasoning is the LLM's explanation for why this action was taken.
+	// Thinking captures the model's assessment of the current state before acting.
+	// This is extracted from the model's text output before the tool call.
+	Thinking string
+
+	// Evaluation captures how the model evaluated the previous action's result.
+	Evaluation string
+
+	// NextGoal describes what the model is trying to achieve with this action.
+	NextGoal string
+
+	// Reasoning is the brief explanation from the tool's reasoning parameter.
 	Reasoning string
+
+	// Memory captures any important context the agent wants to remember.
+	Memory string
 
 	// ScreenshotPath is the path to the screenshot taken after this step.
 	ScreenshotPath string
@@ -261,16 +315,25 @@ type Agent struct {
 }
 
 // New creates a new browser automation agent with the given configuration.
+// Only APIKey is required - all other fields have sensible defaults.
 func New(cfg Config) (*Agent, error) {
-	// Apply defaults
+	// Validate required fields first
+	if cfg.APIKey == "" {
+		return nil, fmt.Errorf("APIKey is required")
+	}
+
+	// Apply preset settings (before other defaults so preset values take effect)
+	cfg.applyPreset()
+
+	// Apply remaining defaults
 	if cfg.Model == "" {
-		cfg.Model = "gemini-3-flash-preview"
+		cfg.Model = ModelGemini3Flash
 	}
 	if cfg.Viewport == nil {
 		cfg.Viewport = DesktopViewport
 	}
 	if cfg.MaxTokens == 0 {
-		cfg.MaxTokens = 1048576 // gemini-3-flash-preview input limit
+		cfg.MaxTokens = 1048576 // 1M token context
 	}
 	if cfg.ProfileDir == "" {
 		home, err := os.UserHomeDir()
@@ -281,24 +344,70 @@ func New(cfg Config) (*Agent, error) {
 	}
 	if cfg.ScreenshotConfig == nil {
 		cfg.ScreenshotConfig = &screenshot.Config{
-			Enabled:        true,
+			Enabled:        !cfg.TextOnly,
 			Annotate:       true,
 			StorageDir:     filepath.Join(cfg.ProfileDir, "..", "screenshots"),
 			MaxScreenshots: 100,
 		}
 	}
 
-	// Validate required fields
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("APIKey is required")
-	}
-
 	// Create the agent
-	a := &Agent{
-		config: cfg,
+	return &Agent{config: cfg}, nil
+}
+
+// applyPreset applies the preset settings if not already configured.
+// Only sets values that haven't been explicitly set by the user.
+func (c *Config) applyPreset() {
+	// Default to balanced if no preset specified
+	preset := c.Preset
+	if preset == "" {
+		preset = PresetBalanced
 	}
 
-	return a, nil
+	// Get preset values
+	var maxElements, screenshotWidth, screenshotQuality int
+	var textOnly bool
+
+	switch preset {
+	case PresetFast:
+		maxElements = 200
+		textOnly = true
+	case PresetEfficient:
+		maxElements = 100
+		screenshotWidth = 640
+		screenshotQuality = 50
+	case PresetBalanced:
+		maxElements = 150
+		screenshotWidth = 800
+		screenshotQuality = 60
+	case PresetQuality:
+		maxElements = 250
+		screenshotWidth = 1024
+		screenshotQuality = 75
+	case PresetMax:
+		maxElements = 400
+		screenshotWidth = 1280
+		screenshotQuality = 85
+	default:
+		// Unknown preset, use balanced
+		maxElements = 150
+		screenshotWidth = 800
+		screenshotQuality = 60
+	}
+
+	// Apply preset values only if not explicitly set
+	if c.MaxElements == 0 {
+		c.MaxElements = maxElements
+	}
+	if c.ScreenshotMaxWidth == 0 {
+		c.ScreenshotMaxWidth = screenshotWidth
+	}
+	if c.ScreenshotQuality == 0 {
+		c.ScreenshotQuality = screenshotQuality
+	}
+	if !c.TextOnly && textOnly {
+		c.TextOnly = textOnly
+	}
 }
 
 // Start initializes the browser and prepares the agent for task execution.
@@ -370,6 +479,20 @@ func (a *Agent) Start(ctx context.Context) error {
 		},
 		ScreenshotConfig: a.config.ScreenshotConfig,
 	})
+
+	// Configure action highlighting
+	// Default to enabled unless explicitly disabled or headless
+	highlightEnabled := true
+	if a.config.ShowHighlights != nil {
+		highlightEnabled = *a.config.ShowHighlights
+	} else if a.config.Headless {
+		highlightEnabled = false // Disable in headless mode by default
+	}
+	a.browser.SetHighlightEnabled(highlightEnabled)
+
+	if a.config.HighlightDelay > 0 {
+		a.browser.SetHighlightDelay(a.config.HighlightDelay)
+	}
 
 	// Determine screenshot directory for annotations
 	screenshotDir := ""
@@ -478,6 +601,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 
 	var lastResponse string
 	var doneSummary string
+	var accumulatedText strings.Builder   // Accumulate model text to parse for structured thinking
 	pendingSteps := make(map[string]Step) // Track pending function calls until we see their response
 	var doneToolCalled bool
 	var humanTakeoverRequested bool
@@ -567,11 +691,23 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 						}
 						if part.Text != "" {
 							lastResponse = part.Text
+							// Accumulate text for structured thinking extraction
+							accumulatedText.WriteString(part.Text)
+							accumulatedText.WriteString("\n")
 						}
 						// Track pending function calls
 						if part.FunctionCall != nil {
+							// Parse accumulated text for structured thinking
+							thinking := parseStructuredThinking(accumulatedText.String())
+							// Clear accumulated text after parsing
+							accumulatedText.Reset()
+
 							step := Step{
-								Action: part.FunctionCall.Name,
+								Action:     part.FunctionCall.Name,
+								Thinking:   thinking.Thinking,
+								Evaluation: thinking.Evaluation,
+								Memory:     thinking.Memory,
+								NextGoal:   thinking.NextGoal,
 							}
 							args := part.FunctionCall.Args
 							// Extract reasoning if available (also check "reason" as alias)
@@ -806,6 +942,59 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// parsedThinking holds extracted structured thinking from model output.
+type parsedThinking struct {
+	Thinking   string
+	Evaluation string
+	Memory     string
+	NextGoal   string
+}
+
+// parseStructuredThinking extracts structured thinking sections from model text output.
+// It looks for **THINKING**, **EVALUATION**, **MEMORY**, **NEXT_GOAL** sections.
+func parseStructuredThinking(text string) parsedThinking {
+	result := parsedThinking{}
+
+	// Helper to extract content after a section header until the next header or end
+	extractSection := func(header string) string {
+		// Look for **HEADER**: pattern (case insensitive)
+		pattern := regexp.MustCompile(`(?i)\*\*` + header + `\*\*:\s*`)
+		loc := pattern.FindStringIndex(text)
+		if loc == nil {
+			return ""
+		}
+
+		// Start after the header
+		start := loc[1]
+
+		// Find the next section header or end of text
+		nextHeaders := regexp.MustCompile(`(?i)\*\*(THINKING|EVALUATION|MEMORY|NEXT_GOAL)\*\*:`)
+		remaining := text[start:]
+		nextLoc := nextHeaders.FindStringIndex(remaining)
+
+		var content string
+		if nextLoc == nil {
+			content = remaining
+		} else {
+			content = remaining[:nextLoc[0]]
+		}
+
+		// Clean up the content
+		content = strings.TrimSpace(content)
+		// Remove markdown formatting artifacts
+		content = strings.TrimPrefix(content, "[")
+		content = strings.TrimSuffix(content, "]")
+		return strings.TrimSpace(content)
+	}
+
+	result.Thinking = extractSection("THINKING")
+	result.Evaluation = extractSection("EVALUATION")
+	result.Memory = extractSection("MEMORY")
+	result.NextGoal = extractSection("NEXT_GOAL")
+
+	return result
+}
+
 // Call executes a raw CDP command on the current page.
 // This is useful for accessing CDP features not directly exposed by the agent.
 // Returns the raw JSON response from the CDP call.
@@ -892,6 +1081,16 @@ func (a *Agent) ToggleAnnotations(ctx context.Context, cfg *AnnotationConfig) (b
 // GetAgent returns the underlying BrowserAgent for advanced use cases.
 func (a *Agent) GetAgent() *agent.BrowserAgent {
 	return a.browserAgent
+}
+
+// CountTokens returns the accurate token count for text using Google's tokenizer.
+// Falls back to estimation if tokenizer is unavailable.
+// This is useful for budget management and understanding token usage.
+func (a *Agent) CountTokens(ctx context.Context, text string) int {
+	if a.browserAgent == nil {
+		return 0
+	}
+	return a.browserAgent.CountTokens(ctx, text)
 }
 
 // parseRateLimitDelay extracts the retry delay from a 429 rate limit error message.

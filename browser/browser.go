@@ -50,6 +50,11 @@ type Browser struct {
 	pages       map[string]*rod.Page // tabID -> page
 	activeTabID string               // currently active tab
 
+	// Action highlighting
+	highlighter      *Highlighter
+	highlightEnabled bool
+	highlightDelay   time.Duration
+
 	// Deprecated: use pages map instead
 	page *rod.Page
 
@@ -59,9 +64,11 @@ type Browser struct {
 // New creates a new browser wrapper.
 func New(rodBrowser *rod.Browser, cfg Config) *Browser {
 	b := &Browser{
-		rod:    rodBrowser,
-		config: cfg,
-		pages:  make(map[string]*rod.Page),
+		rod:              rodBrowser,
+		config:           cfg,
+		pages:            make(map[string]*rod.Page),
+		highlightEnabled: true,                   // Enable by default
+		highlightDelay:   300 * time.Millisecond, // Default 300ms visual feedback
 	}
 
 	if cfg.ScreenshotConfig != nil {
@@ -69,6 +76,39 @@ func New(rodBrowser *rod.Browser, cfg Config) *Browser {
 	}
 
 	return b
+}
+
+// SetHighlightEnabled enables or disables action highlighting.
+func (b *Browser) SetHighlightEnabled(enabled bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.highlightEnabled = enabled
+	if b.highlighter != nil {
+		b.highlighter.SetEnabled(enabled)
+	}
+}
+
+// SetHighlightDelay sets how long highlights are shown before action execution.
+func (b *Browser) SetHighlightDelay(d time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.highlightDelay = d
+	if b.highlighter != nil {
+		b.highlighter.SetDelay(d)
+	}
+}
+
+// getHighlighter returns a highlighter for the active page.
+func (b *Browser) getHighlighter() *Highlighter {
+	page := b.getActivePageLocked()
+	if page == nil {
+		return nil
+	}
+	if b.highlighter == nil || b.highlighter.page != page {
+		b.highlighter = NewHighlighter(page, b.highlightEnabled)
+		b.highlighter.SetDelay(b.highlightDelay)
+	}
+	return b.highlighter
 }
 
 // waitForStableWithTimeout waits for the page to stabilize with an overall timeout.
@@ -344,6 +384,19 @@ func (b *Browser) Click(ctx context.Context, elementIndex int) error {
 		return fmt.Errorf("element with index %d not found", elementIndex)
 	}
 
+	// Show highlight before click
+	if highlighter := b.getHighlighter(); highlighter != nil {
+		label := fmt.Sprintf("click [%d]", elementIndex)
+		_ = highlighter.HighlightElement(
+			el.BoundingBox.X,
+			el.BoundingBox.Y,
+			el.BoundingBox.Width,
+			el.BoundingBox.Height,
+			label,
+		)
+		defer highlighter.RemoveHighlights()
+	}
+
 	// Click at the center of the element using JavaScript
 	centerX := el.BoundingBox.X + el.BoundingBox.Width/2
 	centerY := el.BoundingBox.Y + el.BoundingBox.Height/2
@@ -395,6 +448,19 @@ func (b *Browser) ClickElement(ctx context.Context, el *dom.Element) error {
 		return fmt.Errorf("no active page")
 	}
 
+	// Show highlight before click
+	if highlighter := b.getHighlighter(); highlighter != nil {
+		label := fmt.Sprintf("click [%d]", el.Index)
+		_ = highlighter.HighlightElement(
+			el.BoundingBox.X,
+			el.BoundingBox.Y,
+			el.BoundingBox.Width,
+			el.BoundingBox.Height,
+			label,
+		)
+		defer highlighter.RemoveHighlights()
+	}
+
 	// Click at the center of the element using CDP
 	centerX := el.BoundingBox.X + el.BoundingBox.Width/2
 	centerY := el.BoundingBox.Y + el.BoundingBox.Height/2
@@ -435,6 +501,61 @@ func (b *Browser) ClickElement(ctx context.Context, el *dom.Element) error {
 	return nil
 }
 
+// ClickAt clicks at specific coordinates on the page.
+// This is useful as a fallback when element detection fails.
+func (b *Browser) ClickAt(ctx context.Context, x, y float64) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	page := b.getActivePageLocked()
+	if page == nil {
+		return fmt.Errorf("no active page")
+	}
+
+	// Show coordinate highlight before click
+	if highlighter := b.getHighlighter(); highlighter != nil {
+		label := fmt.Sprintf("click (%d,%d)", int(x), int(y))
+		_ = highlighter.HighlightCoordinates(x, y, label)
+		defer highlighter.RemoveHighlights()
+	}
+
+	// Use CDP to click at coordinates
+	err := proto.InputDispatchMouseEvent{
+		Type:       proto.InputDispatchMouseEventTypeMouseMoved,
+		X:          x,
+		Y:          y,
+		Button:     proto.InputMouseButtonLeft,
+		ClickCount: 0,
+	}.Call(page)
+	if err != nil {
+		return fmt.Errorf("failed to move mouse: %w", err)
+	}
+
+	err = proto.InputDispatchMouseEvent{
+		Type:       proto.InputDispatchMouseEventTypeMousePressed,
+		X:          x,
+		Y:          y,
+		Button:     proto.InputMouseButtonLeft,
+		ClickCount: 1,
+	}.Call(page)
+	if err != nil {
+		return fmt.Errorf("failed to press mouse: %w", err)
+	}
+
+	err = proto.InputDispatchMouseEvent{
+		Type:       proto.InputDispatchMouseEventTypeMouseReleased,
+		X:          x,
+		Y:          y,
+		Button:     proto.InputMouseButtonLeft,
+		ClickCount: 1,
+	}.Call(page)
+	if err != nil {
+		return fmt.Errorf("failed to release mouse: %w", err)
+	}
+
+	return nil
+}
+
 // Type types text into the currently focused element.
 func (b *Browser) Type(ctx context.Context, text string) error {
 	b.mu.Lock()
@@ -451,6 +572,40 @@ func (b *Browser) Type(ctx context.Context, text string) error {
 
 // TypeInElement clicks on an element and types text into it.
 func (b *Browser) TypeInElement(ctx context.Context, elementIndex int, text string) error {
+	b.mu.Lock()
+
+	page := b.getActivePageLocked()
+	if page == nil {
+		b.mu.Unlock()
+		return fmt.Errorf("no active page")
+	}
+
+	// Get the element map to find the element for highlighting
+	elements, err := dom.ExtractElementMap(ctx, page)
+	if err != nil {
+		b.mu.Unlock()
+		return fmt.Errorf("failed to get element map: %w", err)
+	}
+
+	el, ok := elements.ByIndex(elementIndex)
+	if !ok {
+		b.mu.Unlock()
+		return fmt.Errorf("element with index %d not found", elementIndex)
+	}
+
+	// Show type highlight
+	if highlighter := b.getHighlighter(); highlighter != nil {
+		_ = highlighter.HighlightType(
+			el.BoundingBox.X,
+			el.BoundingBox.Y,
+			el.BoundingBox.Width,
+			el.BoundingBox.Height,
+			text,
+		)
+		defer highlighter.RemoveHighlights()
+	}
+	b.mu.Unlock()
+
 	// First click to focus
 	if err := b.Click(ctx, elementIndex); err != nil {
 		return err
@@ -458,7 +613,7 @@ func (b *Browser) TypeInElement(ctx context.Context, elementIndex int, text stri
 
 	// Small delay to ensure focus
 	b.mu.RLock()
-	page := b.getActivePageLocked()
+	page = b.getActivePageLocked()
 	b.mu.RUnlock()
 	if page != nil {
 		// Wait for stability after click, but don't block on animated pages
@@ -477,6 +632,29 @@ func (b *Browser) Scroll(ctx context.Context, deltaX, deltaY float64) error {
 	page := b.getActivePageLocked()
 	if page == nil {
 		return fmt.Errorf("no active page")
+	}
+
+	// Determine scroll direction for highlight
+	direction := "down"
+	if deltaY < 0 {
+		direction = "up"
+	} else if deltaX > 0 {
+		direction = "right"
+	} else if deltaX < 0 {
+		direction = "left"
+	}
+
+	// Show scroll highlight in center of viewport
+	if highlighter := b.getHighlighter(); highlighter != nil {
+		// Get viewport dimensions
+		viewportWidth := 1280.0
+		viewportHeight := 800.0
+		if b.config.Viewport != nil {
+			viewportWidth = float64(b.config.Viewport.Width)
+			viewportHeight = float64(b.config.Viewport.Height)
+		}
+		_ = highlighter.HighlightScroll(viewportWidth/2, viewportHeight/2, direction)
+		defer highlighter.RemoveHighlights()
 	}
 
 	return page.Mouse.Scroll(deltaX, deltaY, 1)
