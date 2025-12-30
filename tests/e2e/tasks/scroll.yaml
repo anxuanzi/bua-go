@@ -1,0 +1,48 @@
+# Scrolling E2E Tests
+# These tests verify scroll and infinite load capabilities.
+
+tests:
+  - name: basic-scroll
+    description: Scroll down a page
+    url: https://news.ycombinator.com
+    task: "Scroll down the page and report if you see the 'More' link at the bottom"
+    timeout: 1m
+    expected:
+      success: true
+      contains_data:
+        - "More"
+
+  - name: scroll-to-element
+    description: Scroll to find a specific element
+    url: https://en.wikipedia.org/wiki/Web_browser
+    task: "Scroll down to find the 'References' section"
+    timeout: 2m
+    expected:
+      success: true
+      contains_data:
+        - "References"
+
+  - name: infinite-scroll-detection
+    description: Handle infinite scroll page
+    url: https://news.ycombinator.com
+    task: "Scroll down twice to load more content, then report how many stories are visible"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 2  # At least 2 scroll actions
+
+  - name: scroll-up
+    description: Scroll back up
+    url: https://en.wikipedia.org/wiki/Web_browser
+    task: "Scroll to the bottom of the article, then scroll back to the top"
+    timeout: 2m
+    expected:
+      success: true
+
+  - name: horizontal-scroll
+    description: Handle horizontal scrolling (if needed)
+    url: https://httpbin.org/html
+    task: "Check if there's any horizontal scroll needed and report what you see"
+    timeout: 1m
+    expected:
+      success: true

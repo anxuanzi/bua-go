@@ -1,0 +1,50 @@
+# Basic E2E Tests
+# These tests verify fundamental browser automation capabilities.
+
+tests:
+  - name: example-page-load
+    description: Navigate to example.com and verify page loads
+    url: https://example.com
+    task: "Get the page title and main heading"
+    timeout: 1m
+    expected:
+      success: true
+      contains_data:
+        - "Example Domain"
+
+  - name: example-click-link
+    description: Click a link and navigate to new page
+    url: https://example.com
+    task: "Click on 'More information...' link"
+    timeout: 1m
+    expected:
+      success: true
+      url_contains: "iana.org"
+
+  - name: google-search
+    description: Perform a Google search
+    url: https://www.google.com
+    task: "Search for 'example domain test' and report the first result"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 2  # At least: type + click/enter
+
+  - name: navigation-back-forward
+    description: Test browser navigation
+    url: https://example.com
+    task: "Click the 'More information' link, then go back to the original page"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "example.com"
+
+  - name: read-page-content
+    description: Extract specific information from page
+    url: https://httpbin.org/html
+    task: "Read the text content of the page and summarize what you see"
+    timeout: 1m
+    expected:
+      success: true
+      contains_data:
+        - "Moby-Dick"

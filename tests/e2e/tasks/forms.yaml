@@ -1,0 +1,47 @@
+# Form Filling E2E Tests
+# These tests verify form interaction capabilities.
+
+tests:
+  - name: simple-form-input
+    description: Fill a simple text input
+    url: https://httpbin.org/forms/post
+    task: "Fill in the 'customer name' field with 'Test User'"
+    timeout: 1m
+    expected:
+      success: true
+
+  - name: form-submit
+    description: Fill and submit a form
+    url: https://httpbin.org/forms/post
+    task: "Fill in customer name as 'John Doe', select 'Large' size, and submit the form"
+    timeout: 2m
+    expected:
+      success: true
+      contains_data:
+        - "John Doe"
+        - "large"
+
+  - name: search-input
+    description: Type in search box and trigger search
+    url: https://www.wikipedia.org
+    task: "Search for 'browser automation' on Wikipedia"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "wiki"
+
+  - name: dropdown-select
+    description: Select from dropdown
+    url: https://httpbin.org/forms/post
+    task: "Select 'Medium' pizza size from the dropdown"
+    timeout: 1m
+    expected:
+      success: true
+
+  - name: checkbox-toggle
+    description: Check/uncheck checkboxes
+    url: https://httpbin.org/forms/post
+    task: "Check the bacon and cheese toppings, leave others unchecked"
+    timeout: 1m
+    expected:
+      success: true

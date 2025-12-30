@@ -1,0 +1,49 @@
+# Data Scraping E2E Tests
+# These tests verify data extraction capabilities.
+
+tests:
+  - name: hackernews-headlines
+    description: Scrape Hacker News headlines
+    url: https://news.ycombinator.com
+    task: "Get the top 5 story titles from the front page"
+    timeout: 2m
+    expected:
+      success: true
+      min_data_items: 5
+
+  - name: hackernews-with-links
+    description: Scrape headlines with links
+    url: https://news.ycombinator.com
+    task: "Get the top 3 stories with their titles and URLs"
+    timeout: 2m
+    expected:
+      success: true
+      contains_data:
+        - "http"  # Should include URLs
+
+  - name: table-extraction
+    description: Extract table data
+    url: https://httpbin.org/html
+    task: "Find and extract any structured content from the page"
+    timeout: 1m
+    expected:
+      success: true
+
+  - name: list-extraction
+    description: Extract list items
+    url: https://example.com
+    task: "List all the links on this page"
+    timeout: 1m
+    expected:
+      success: true
+      contains_data:
+        - "iana.org"
+
+  - name: multi-page-scrape
+    description: Navigate and scrape across pages
+    url: https://news.ycombinator.com
+    task: "Get the title of the first story, click 'More', and get titles from the second page too"
+    timeout: 3m
+    expected:
+      success: true
+      min_steps: 3  # At least: read + click + read
