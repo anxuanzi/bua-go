@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
 	"time"
 
 	"google.golang.org/adk/agent"
@@ -66,26 +64,15 @@ type Config struct {
 	// When enabled, the agent relies only on element map text data.
 	// Best for: text extraction, form filling, simple navigation where visual context isn't needed.
 	TextOnly bool
-
-	// Verification configures action verification behavior.
-	Verification *VerificationConfig
 }
 
 // BrowserAgent wraps an ADK agent with browser automation capabilities.
 type BrowserAgent struct {
-	config      Config
-	browser     *browser.Browser
-	adkAgent    agent.Agent
-	logger      *Logger
-	tools       []tool.Tool
-	verifier    *Verifier
-	extractor   *Extractor
-	confTracker *ConfidenceTracker
-	matcher     *ElementMatcher
-
-	// In-memory state for findings (since tool.Context doesn't provide state access)
-	findings   []map[string]any
-	findingsMu sync.RWMutex
+	config   Config
+	browser  *browser.Browser
+	adkAgent agent.Agent
+	logger   *Logger
+	tools    []tool.Tool
 }
 
 // New creates a new browser agent.
@@ -100,26 +87,11 @@ func New(cfg Config, b *browser.Browser) *BrowserAgent {
 		cfg.Model = "gemini-3-flash-preview"
 	}
 
-	ba := &BrowserAgent{
-		config:   cfg,
-		browser:  b,
-		logger:   NewLogger(cfg.Debug),
-		findings: []map[string]any{},
+	return &BrowserAgent{
+		config:  cfg,
+		browser: b,
+		logger:  NewLogger(cfg.Debug),
 	}
-
-	// Initialize verifier with config (or defaults)
-	ba.verifier = NewVerifier(ba, cfg.Verification)
-
-	// Initialize structured extractor
-	ba.extractor = NewExtractor()
-
-	// Initialize confidence tracker
-	ba.confTracker = NewConfidenceTracker()
-
-	// Initialize element matcher
-	ba.matcher = NewElementMatcher()
-
-	return ba
 }
 
 // Init initializes the ADK agent with browser tools.
@@ -287,7 +259,7 @@ func (a *BrowserAgent) captureScreenshotForResponse() string {
 func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 	var tools []tool.Tool
 
-	// Click tool with verification and retry
+	// Click tool
 	clickHandler := func(ctx tool.Context, input ClickInput) (ClickOutput, error) {
 		if a.browser == nil {
 			return ClickOutput{Success: false, Message: "Browser not initialized"}, nil
@@ -299,89 +271,15 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 
 		a.logger.Click(input.ElementIndex, input.Reasoning)
 
-		// Calculate element targeting confidence
-		var elemConf *ElementConfidence
-		elements, _ := a.browser.GetElementMap(bgCtx)
-		if elements != nil {
-			if elem, ok := elements.ByIndex(input.ElementIndex); ok {
-				elemConf = CalculateElementConfidence(elem, elements, "click")
-			}
+		err := a.browser.Click(bgCtx, input.ElementIndex)
+		if err != nil {
+			a.logger.ActionResult(false, err.Error())
+			return ClickOutput{Success: false, Message: err.Error()}, nil
 		}
 
-		// Capture pre-action state for verification
-		var preSnapshot *PageSnapshot
-		if a.verifier.config.Enabled {
-			var err error
-			preSnapshot, err = a.verifier.CaptureSnapshot(bgCtx)
-			if err != nil {
-				a.logger.Error("click/CapturePreSnapshot", err)
-			}
-		}
-
-		// Execute click with retry loop
-		var lastErr error
-		maxAttempts := 1
-		if a.verifier.config.Enabled {
-			maxAttempts = a.verifier.config.MaxRetries + 1
-		}
-
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			if attempt > 0 {
-				a.logger.ActionResult(false, fmt.Sprintf("Retrying click (attempt %d/%d)", attempt+1, maxAttempts))
-				time.Sleep(a.verifier.config.RetryDelay)
-			}
-
-			lastErr = a.browser.Click(bgCtx, input.ElementIndex)
-			if lastErr != nil {
-				continue // Try again
-			}
-
-			// Verify the action if enabled
-			if a.verifier.config.Enabled && preSnapshot != nil {
-				time.Sleep(a.verifier.config.StabilizationTime)
-				postSnapshot, err := a.verifier.CaptureSnapshot(bgCtx)
-				if err != nil {
-					a.logger.Error("click/CapturePostSnapshot", err)
-					break // Can't verify, but action succeeded
-				}
-
-				verification := a.verifier.VerifyClick(bgCtx, input.ElementIndex, preSnapshot, postSnapshot)
-				verification.Retries = attempt
-
-				// Calculate page state diff and track confidence
-				prePostDiff := CalculatePageStateDiff(preSnapshot, postSnapshot)
-				actionConf := a.confTracker.CalculateActionConfidence("click", verification.Verified, attempt, elemConf, prePostDiff)
-				a.confTracker.RecordAction(actionConf)
-
-				if verification.Verified {
-					msg := fmt.Sprintf("Clicked element %d (verified: %s, confidence: %.2f)", input.ElementIndex, verification.VerificationMsg, actionConf.OverallScore.Value)
-					a.logger.ActionResult(true, msg)
-					return ClickOutput{Success: true, Message: msg, Verified: true, Screenshot: a.captureScreenshotForResponse()}, nil
-				}
-
-				// Not verified - retry if allowed
-				if !a.verifier.ShouldRetry(verification) {
-					msg := fmt.Sprintf("Clicked element %d (unverified: %s, confidence: %.2f)", input.ElementIndex, verification.VerificationMsg, actionConf.OverallScore.Value)
-					a.logger.ActionResult(true, msg)
-					return ClickOutput{Success: true, Message: msg, Verified: false, Screenshot: a.captureScreenshotForResponse()}, nil
-				}
-			} else {
-				// No verification - record action with default confidence
-				actionConf := a.confTracker.CalculateActionConfidence("click", true, attempt, elemConf, 0.5)
-				a.confTracker.RecordAction(actionConf)
-
-				msg := fmt.Sprintf("Clicked element %d (confidence: %.2f)", input.ElementIndex, actionConf.OverallScore.Value)
-				a.logger.ActionResult(true, msg)
-				return ClickOutput{Success: true, Message: msg, Screenshot: a.captureScreenshotForResponse()}, nil
-			}
-		}
-
-		// All attempts failed - record failure
-		actionConf := a.confTracker.CalculateActionConfidence("click", false, maxAttempts, elemConf, 0.0)
-		a.confTracker.RecordAction(actionConf)
-
-		a.logger.ActionResult(false, lastErr.Error())
-		return ClickOutput{Success: false, Message: lastErr.Error()}, nil
+		msg := fmt.Sprintf("Clicked element %d", input.ElementIndex)
+		a.logger.ActionResult(true, msg)
+		return ClickOutput{Success: true, Message: msg, Screenshot: a.captureScreenshotForResponse()}, nil
 	}
 	clickTool, err := functiontool.New(
 		functiontool.Config{
@@ -395,7 +293,7 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 	}
 	tools = append(tools, clickTool)
 
-	// Type tool with verification and retry
+	// Type tool
 	typeHandler := func(ctx tool.Context, input TypeInput) (TypeOutput, error) {
 		if a.browser == nil {
 			return TypeOutput{Success: false, Message: "Browser not initialized"}, nil
@@ -407,89 +305,15 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 
 		a.logger.Type(input.ElementIndex, input.Text, input.Reasoning)
 
-		// Calculate element targeting confidence
-		var elemConf *ElementConfidence
-		elements, _ := a.browser.GetElementMap(bgCtx)
-		if elements != nil {
-			if elem, ok := elements.ByIndex(input.ElementIndex); ok {
-				elemConf = CalculateElementConfidence(elem, elements, "type")
-			}
+		err := a.browser.TypeInElement(bgCtx, input.ElementIndex, input.Text)
+		if err != nil {
+			a.logger.ActionResult(false, err.Error())
+			return TypeOutput{Success: false, Message: err.Error()}, nil
 		}
 
-		// Capture pre-action state for verification
-		var preSnapshot *PageSnapshot
-		if a.verifier.config.Enabled {
-			var err error
-			preSnapshot, err = a.verifier.CaptureSnapshot(bgCtx)
-			if err != nil {
-				a.logger.Error("type/CapturePreSnapshot", err)
-			}
-		}
-
-		// Execute type with retry loop
-		var lastErr error
-		maxAttempts := 1
-		if a.verifier.config.Enabled {
-			maxAttempts = a.verifier.config.MaxRetries + 1
-		}
-
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			if attempt > 0 {
-				a.logger.ActionResult(false, fmt.Sprintf("Retrying type (attempt %d/%d)", attempt+1, maxAttempts))
-				time.Sleep(a.verifier.config.RetryDelay)
-			}
-
-			lastErr = a.browser.TypeInElement(bgCtx, input.ElementIndex, input.Text)
-			if lastErr != nil {
-				continue // Try again
-			}
-
-			// Verify the action if enabled
-			if a.verifier.config.Enabled && preSnapshot != nil {
-				time.Sleep(a.verifier.config.StabilizationTime)
-				postSnapshot, err := a.verifier.CaptureSnapshot(bgCtx)
-				if err != nil {
-					a.logger.Error("type/CapturePostSnapshot", err)
-					break // Can't verify, but action succeeded
-				}
-
-				verification := a.verifier.VerifyType(bgCtx, input.ElementIndex, input.Text, preSnapshot, postSnapshot)
-				verification.Retries = attempt
-
-				// Calculate page state diff and track confidence
-				prePostDiff := CalculatePageStateDiff(preSnapshot, postSnapshot)
-				actionConf := a.confTracker.CalculateActionConfidence("type", verification.Verified, attempt, elemConf, prePostDiff)
-				a.confTracker.RecordAction(actionConf)
-
-				if verification.Verified {
-					msg := fmt.Sprintf("Typed '%s' into element %d (verified: %s, confidence: %.2f)", input.Text, input.ElementIndex, verification.VerificationMsg, actionConf.OverallScore.Value)
-					a.logger.ActionResult(true, msg)
-					return TypeOutput{Success: true, Message: msg, Verified: true, Screenshot: a.captureScreenshotForResponse()}, nil
-				}
-
-				// Not verified - retry if allowed
-				if !a.verifier.ShouldRetry(verification) {
-					msg := fmt.Sprintf("Typed '%s' into element %d (unverified: %s, confidence: %.2f)", input.Text, input.ElementIndex, verification.VerificationMsg, actionConf.OverallScore.Value)
-					a.logger.ActionResult(true, msg)
-					return TypeOutput{Success: true, Message: msg, Verified: false, Screenshot: a.captureScreenshotForResponse()}, nil
-				}
-			} else {
-				// No verification - record action with default confidence
-				actionConf := a.confTracker.CalculateActionConfidence("type", true, attempt, elemConf, 0.3)
-				a.confTracker.RecordAction(actionConf)
-
-				msg := fmt.Sprintf("Typed '%s' into element %d (confidence: %.2f)", input.Text, input.ElementIndex, actionConf.OverallScore.Value)
-				a.logger.ActionResult(true, msg)
-				return TypeOutput{Success: true, Message: msg, Screenshot: a.captureScreenshotForResponse()}, nil
-			}
-		}
-
-		// All attempts failed - record failure
-		actionConf := a.confTracker.CalculateActionConfidence("type", false, maxAttempts, elemConf, 0.0)
-		a.confTracker.RecordAction(actionConf)
-
-		a.logger.ActionResult(false, lastErr.Error())
-		return TypeOutput{Success: false, Message: lastErr.Error()}, nil
+		msg := fmt.Sprintf("Typed '%s' into element %d", input.Text, input.ElementIndex)
+		a.logger.ActionResult(true, msg)
+		return TypeOutput{Success: true, Message: msg, Screenshot: a.captureScreenshotForResponse()}, nil
 	}
 	typeTool, err := functiontool.New(
 		functiontool.Config{
@@ -731,213 +555,6 @@ func (a *BrowserAgent) createBrowserTools() ([]tool.Tool, error) {
 	}
 	tools = append(tools, pageStateTool)
 
-	// Save finding tool - for persisting important discoveries
-	saveFindingHandler := func(ctx tool.Context, input SaveFindingInput) (SaveFindingOutput, error) {
-		a.logger.Info("save_finding: Saving: %s - %s", input.Category, input.Title)
-
-		// Create a structured finding to save
-		finding := map[string]any{
-			"category":   input.Category,
-			"title":      input.Title,
-			"details":    input.Details,
-			"source_url": a.browser.GetURL(),
-			"timestamp":  time.Now().Format(time.RFC3339),
-		}
-
-		// Save to agent's internal findings store
-		a.findingsMu.Lock()
-		a.findings = append(a.findings, finding)
-		totalSaved := len(a.findings)
-		a.findingsMu.Unlock()
-
-		// Generate finding ID
-		findingID := fmt.Sprintf("finding_%s_%s_%d",
-			input.Category,
-			sanitizeFilename(input.Title),
-			time.Now().Unix())
-
-		return SaveFindingOutput{
-			Success:    true,
-			Message:    fmt.Sprintf("Saved finding: %s", input.Title),
-			FindingID:  findingID,
-			TotalSaved: totalSaved,
-		}, nil
-	}
-	saveFindingTool, err := functiontool.New(
-		functiontool.Config{
-			Name:        "save_finding",
-			Description: "Save an important finding or discovery to memory. Use this to remember leads, contacts, important data, or any information you need to recall later. Findings persist across the entire session.",
-		},
-		saveFindingHandler,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create save_finding tool: %w", err)
-	}
-	tools = append(tools, saveFindingTool)
-
-	// Search findings tool - for retrieving saved findings
-	searchFindingsHandler := func(ctx tool.Context, input SearchFindingsInput) (SearchFindingsOutput, error) {
-		a.logger.Info("search_findings: Searching: %s (category: %s)", input.Query, input.Category)
-
-		a.findingsMu.RLock()
-		allFindings := make([]map[string]any, len(a.findings))
-		copy(allFindings, a.findings)
-		a.findingsMu.RUnlock()
-
-		var results []map[string]any
-
-		// Filter by category if provided
-		if input.Category != "" {
-			for _, finding := range allFindings {
-				cat, _ := finding["category"].(string)
-				if cat == input.Category {
-					results = append(results, finding)
-				}
-			}
-		} else {
-			results = allFindings
-		}
-
-		// Filter by query if provided
-		if input.Query != "" && len(results) > 0 {
-			filtered := []map[string]any{}
-			queryLower := strings.ToLower(input.Query)
-			for _, finding := range results {
-				title, _ := finding["title"].(string)
-				details, _ := finding["details"].(string)
-				if strings.Contains(strings.ToLower(title), queryLower) ||
-					strings.Contains(strings.ToLower(details), queryLower) {
-					filtered = append(filtered, finding)
-				}
-			}
-			results = filtered
-		}
-
-		return SearchFindingsOutput{
-			Success:  true,
-			Findings: results,
-			Count:    len(results),
-		}, nil
-	}
-	searchFindingsTool, err := functiontool.New(
-		functiontool.Config{
-			Name:        "search_findings",
-			Description: "Search through previously saved findings. Use this to recall leads, contacts, or any data you saved earlier. You can filter by category (e.g., 'lead', 'contact', 'product') or search by keyword.",
-		},
-		searchFindingsHandler,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create search_findings tool: %w", err)
-	}
-	tools = append(tools, searchFindingsTool)
-
-	// Structured extraction tool - validates and saves data with schemas
-	extractStructuredHandler := func(ctx tool.Context, input ExtractStructuredInput) (ExtractStructuredOutput, error) {
-		a.logger.Info("extract_structured: Using schema: %s", input.Schema)
-
-		// Validate the data against the schema
-		result := a.extractor.Validate(input.Schema, input.Data)
-
-		// Calculate confidence based on filled fields
-		totalFields := 0
-		filledFields := 0
-		if schema, ok := a.extractor.GetSchema(input.Schema); ok {
-			totalFields = len(schema.Fields)
-			for _, field := range schema.Fields {
-				if _, exists := input.Data[field.Name]; exists {
-					filledFields++
-				}
-			}
-		}
-
-		confidence := CalculateExtractionConfidence(result, totalFields, filledFields)
-		result.Confidence = confidence
-
-		// Save the validated data as a finding
-		finding := map[string]any{
-			"category":   input.Schema,
-			"schema":     input.Schema,
-			"data":       input.Data,
-			"valid":      result.Valid,
-			"confidence": confidence,
-			"source_url": a.browser.GetURL(),
-			"timestamp":  time.Now().Format(time.RFC3339),
-		}
-
-		a.findingsMu.Lock()
-		a.findings = append(a.findings, finding)
-		a.findingsMu.Unlock()
-
-		findingID := fmt.Sprintf("extract_%s_%d", input.Schema, time.Now().Unix())
-
-		return ExtractStructuredOutput{
-			Success:    true,
-			Message:    fmt.Sprintf("Extracted %s data (confidence: %.0f%%)", input.Schema, confidence*100),
-			Valid:      result.Valid,
-			Confidence: confidence,
-			FindingID:  findingID,
-			Errors:     result.Errors,
-			Warnings:   result.Warnings,
-		}, nil
-	}
-	extractStructuredTool, err := functiontool.New(
-		functiontool.Config{
-			Name: "extract_structured",
-			Description: `Extract and validate data using predefined schemas. Available schemas:
-- contact: name, email, phone, company, title, location
-- product: name, price, description, url, image_url, category, rating, availability
-- article: title, author, date, content, url, tags
-- business: name, address, city, phone, website, rating, hours, category
-- social_profile: username, display_name, bio, followers, following, posts, profile_url, avatar_url
-- job_listing: title, company, location, salary, description, requirements, job_type, posted_date, apply_url
-- generic: key, value, source
-
-Data is validated and saved with a confidence score indicating extraction quality.`,
-		},
-		extractStructuredHandler,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create extract_structured tool: %w", err)
-	}
-	tools = append(tools, extractStructuredTool)
-
-	// List schemas tool - shows available extraction schemas
-	listSchemasHandler := func(ctx tool.Context, input ListSchemasInput) (ListSchemasOutput, error) {
-		a.logger.Info("list_schemas: Listing available schemas")
-
-		var schemas []SchemaInfo
-		for _, name := range a.extractor.ListSchemas() {
-			if schema, ok := a.extractor.GetSchema(name); ok {
-				fields := make([]string, len(schema.Fields))
-				for i, f := range schema.Fields {
-					req := ""
-					if f.Required {
-						req = "*"
-					}
-					fields[i] = f.Name + req
-				}
-				schemas = append(schemas, SchemaInfo{
-					Name:        schema.Name,
-					Description: schema.Description,
-					Fields:      fields,
-				})
-			}
-		}
-
-		return ListSchemasOutput{Schemas: schemas}, nil
-	}
-	listSchemasTool, err := functiontool.New(
-		functiontool.Config{
-			Name:        "list_schemas",
-			Description: "List all available extraction schemas with their fields. Fields marked with * are required.",
-		},
-		listSchemasHandler,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create list_schemas tool: %w", err)
-	}
-	tools = append(tools, listSchemasTool)
-
 	// Multi-tab tools
 	newTabHandler := func(ctx tool.Context, input NewTabInput) (NewTabOutput, error) {
 		if a.browser == nil {
@@ -1152,15 +769,10 @@ Data is validated and saved with a confidence score indicating extraction qualit
 	doneHandler := func(ctx tool.Context, input DoneInput) (DoneOutput, error) {
 		a.logger.Done(input.Success, input.Summary)
 
-		// Get all findings count from agent's internal store
-		a.findingsMu.RLock()
-		totalFindings := len(a.findings)
-		a.findingsMu.RUnlock()
-
 		return DoneOutput{
-			Success:       input.Success,
-			Summary:       input.Summary,
-			TotalFindings: totalFindings,
+			Success: input.Success,
+			Summary: input.Summary,
+			Data:    input.Data,
 		}, nil
 	}
 	doneTool, err := functiontool.New(
@@ -1206,7 +818,6 @@ type ClickInput struct {
 type ClickOutput struct {
 	Success    bool   `json:"success"`
 	Message    string `json:"message"`
-	Verified   bool   `json:"verified,omitempty"`   // Action was verified to have intended effect
 	Screenshot string `json:"screenshot,omitempty"` // Base64 PNG (only in smart mode)
 }
 
@@ -1219,7 +830,6 @@ type TypeInput struct {
 type TypeOutput struct {
 	Success    bool   `json:"success"`
 	Message    string `json:"message"`
-	Verified   bool   `json:"verified,omitempty"`   // Action was verified to have intended effect
 	Screenshot string `json:"screenshot,omitempty"` // Base64 PNG (only in smart mode)
 }
 
@@ -1272,61 +882,6 @@ type GetPageStateOutput struct {
 	ElementMap string `json:"element_map"`
 	Screenshot string `json:"screenshot,omitempty"`
 	Error      string `json:"error,omitempty"`
-}
-
-// Memory tools input/output types
-
-type SaveFindingInput struct {
-	Category string `json:"category" jsonschema:"Category of the finding (e.g., 'lead', 'contact', 'product', 'link', 'data')"`
-	Title    string `json:"title" jsonschema:"Short title or identifier for this finding"`
-	Details  string `json:"details" jsonschema:"Detailed information about this finding (include all relevant data)"`
-}
-
-type SaveFindingOutput struct {
-	Success    bool   `json:"success"`
-	Message    string `json:"message"`
-	FindingID  string `json:"finding_id"`
-	TotalSaved int    `json:"total_saved"`
-}
-
-type SearchFindingsInput struct {
-	Query    string `json:"query" jsonschema:"Search query to find relevant findings"`
-	Category string `json:"category,omitempty" jsonschema:"Optional: filter by category (e.g., 'lead', 'contact')"`
-}
-
-type SearchFindingsOutput struct {
-	Success  bool             `json:"success"`
-	Findings []map[string]any `json:"findings"`
-	Count    int              `json:"count"`
-}
-
-// Structured extraction types
-
-type ExtractStructuredInput struct {
-	Schema string         `json:"schema" jsonschema:"The extraction schema to use: 'contact', 'product', 'article', 'business', 'social_profile', 'job_listing', or 'generic'"`
-	Data   map[string]any `json:"data" jsonschema:"The extracted data matching the schema fields"`
-}
-
-type ExtractStructuredOutput struct {
-	Success    bool     `json:"success"`
-	Message    string   `json:"message"`
-	Valid      bool     `json:"valid"`
-	Confidence float64  `json:"confidence"` // 0.0 to 1.0
-	FindingID  string   `json:"finding_id"`
-	Errors     []string `json:"errors,omitempty"`
-	Warnings   []string `json:"warnings,omitempty"`
-}
-
-type ListSchemasInput struct{}
-
-type ListSchemasOutput struct {
-	Schemas []SchemaInfo `json:"schemas"`
-}
-
-type SchemaInfo struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Fields      []string `json:"fields"`
 }
 
 // Multi-tab input/output types
@@ -1395,9 +950,9 @@ type DoneInput struct {
 }
 
 type DoneOutput struct {
-	Success       bool   `json:"success"`
-	Summary       string `json:"summary"`
-	TotalFindings int    `json:"total_findings"`
+	Success bool           `json:"success"`
+	Summary string         `json:"summary"`
+	Data    map[string]any `json:"data,omitempty"`
 }
 
 // Download tool input/output types
@@ -1433,36 +988,9 @@ func (a *BrowserAgent) Tools() []tool.Tool {
 	return a.tools
 }
 
-// GetFindings returns all findings collected during task execution.
-func (a *BrowserAgent) GetFindings() []map[string]any {
-	a.findingsMu.RLock()
-	defer a.findingsMu.RUnlock()
-
-	// Return a copy to prevent mutation
-	result := make([]map[string]any, len(a.findings))
-	for i, finding := range a.findings {
-		copied := make(map[string]any)
-		for k, v := range finding {
-			copied[k] = v
-		}
-		result[i] = copied
-	}
-	return result
-}
-
 // GetLogger returns the logger for external token/timing updates.
 func (a *BrowserAgent) GetLogger() *Logger {
 	return a.logger
-}
-
-// GetTaskConfidence returns the current task confidence metrics.
-func (a *BrowserAgent) GetTaskConfidence() *TaskConfidence {
-	return a.confTracker.GetTaskConfidence()
-}
-
-// ResetConfidenceTracker resets the confidence tracker for a new task.
-func (a *BrowserAgent) ResetConfidenceTracker() {
-	a.confTracker = NewConfidenceTracker()
 }
 
 // Result represents the result of a task execution.
@@ -1473,7 +1001,6 @@ type Result struct {
 	Steps           []Step
 	TokensUsed      int
 	ScreenshotPaths []string
-	Confidence      *TaskConfidence `json:"confidence,omitempty"` // overall task confidence
 }
 
 // Step represents a single step in the execution.
@@ -1484,7 +1011,6 @@ type Step struct {
 	URL            string
 	Title          string
 	ScreenshotPath string
-	Confidence     *ActionConfidence `json:"confidence,omitempty"` // step confidence
 }
 
 // PageState represents the current state of the page.
@@ -1494,39 +1020,4 @@ type PageState struct {
 	Elements      *dom.ElementMap
 	Screenshot    []byte
 	ScreenshotB64 string
-}
-
-// FindElements finds elements matching the query criteria using enhanced targeting.
-func (a *BrowserAgent) FindElements(elements *dom.ElementMap, query ElementQuery) []ElementMatch {
-	return a.matcher.FindElements(elements, query)
-}
-
-// FindBestMatch returns the single best matching element for the query.
-func (a *BrowserAgent) FindBestMatch(elements *dom.ElementMap, query ElementQuery) *ElementMatch {
-	return a.matcher.FindBestMatch(elements, query)
-}
-
-// FindByText finds elements by text content using fuzzy matching.
-func (a *BrowserAgent) FindByText(elements *dom.ElementMap, text string) []ElementMatch {
-	return a.matcher.FindByText(elements, text)
-}
-
-// FindButton finds a button element by text.
-func (a *BrowserAgent) FindButton(elements *dom.ElementMap, text string) *ElementMatch {
-	return a.matcher.FindButton(elements, text)
-}
-
-// FindInput finds an input element by label or placeholder.
-func (a *BrowserAgent) FindInput(elements *dom.ElementMap, labelOrPlaceholder string) *ElementMatch {
-	return a.matcher.FindInput(elements, labelOrPlaceholder)
-}
-
-// FindLink finds a link element by text or href.
-func (a *BrowserAgent) FindLink(elements *dom.ElementMap, textOrHref string) *ElementMatch {
-	return a.matcher.FindLink(elements, textOrHref)
-}
-
-// FindNear finds elements near a reference element.
-func (a *BrowserAgent) FindNear(elements *dom.ElementMap, refIndex int, query ElementQuery) []ElementMatch {
-	return a.matcher.FindNear(elements, refIndex, query)
 }

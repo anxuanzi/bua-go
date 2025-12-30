@@ -228,18 +228,6 @@ type Result struct {
 
 	// ScreenshotPaths contains paths to screenshots taken during execution.
 	ScreenshotPaths []string
-
-	// Confidence contains task-level confidence metrics.
-	Confidence *TaskConfidence
-}
-
-// TaskConfidence contains confidence metrics for task execution.
-type TaskConfidence struct {
-	AverageConfidence float64
-	MinConfidence     float64
-	SuccessRate       float64
-	TotalSteps        int
-	FailedSteps       int
 }
 
 // Step represents a single step in the task execution.
@@ -694,17 +682,6 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		}
 	}
 
-	// Add confidence metrics from the agent
-	if taskConf := a.browserAgent.GetTaskConfidence(); taskConf != nil {
-		result.Confidence = &TaskConfidence{
-			AverageConfidence: taskConf.AverageConfidence,
-			MinConfidence:     taskConf.MinConfidence,
-			SuccessRate:       taskConf.SuccessRate,
-			TotalSteps:        taskConf.TotalSteps,
-			FailedSteps:       taskConf.FailedSteps,
-		}
-	}
-
 	return result, nil
 }
 
@@ -915,18 +892,6 @@ func (a *Agent) ToggleAnnotations(ctx context.Context, cfg *AnnotationConfig) (b
 // GetAgent returns the underlying BrowserAgent for advanced use cases.
 func (a *Agent) GetAgent() *agent.BrowserAgent {
 	return a.browserAgent
-}
-
-// GetFindings returns all findings collected by the agent during task execution.
-func (a *Agent) GetFindings() []map[string]any {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.browserAgent == nil {
-		return nil
-	}
-
-	return a.browserAgent.GetFindings()
 }
 
 // parseRateLimitDelay extracts the retry delay from a 429 rate limit error message.

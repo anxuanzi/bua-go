@@ -189,12 +189,6 @@ func (bt *BrowserTool) execute(ctx tool.Context, input BrowserToolInput) (Browse
 		}
 	}
 
-	// Get findings
-	findings := bt.agent.GetFindings()
-	if len(findings) > 0 {
-		output.Findings = findings
-	}
-
 	// Close browser if not keeping it
 	if !input.KeepBrowser {
 		bt.agent.Close()
@@ -382,7 +376,6 @@ func (mbt *MultiBrowserTool) executeTasks(input MultiBrowserInput) (MultiBrowser
 		Success:   result.Success,
 		Message:   "Task completed",
 		BrowserID: input.BrowserID,
-		Findings:  agent.GetFindings(),
 	}
 
 	// Convert Data to map[string]any if possible
