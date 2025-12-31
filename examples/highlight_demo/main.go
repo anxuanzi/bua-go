@@ -35,12 +35,15 @@ func main() {
 	// - Scroll direction indicators
 	showHighlights := true
 	agent, err := bua.New(bua.Config{
-		APIKey:         apiKey,
-		Model:          bua.ModelGemini3Flash,
-		Headless:       false,                  // Must be non-headless to see highlights
-		ShowHighlights: &showHighlights,        // Explicitly enable (default is true for non-headless)
-		HighlightDelay: 500 * time.Millisecond, // Slower highlights for demo visibility
-		Debug:          true,
+		APIKey:          apiKey,
+		Model:           bua.ModelGemini3Pro,
+		Preset:          bua.PresetQuality,
+		Headless:        false,                  // Must be non-headless to see highlights
+		ShowHighlights:  &showHighlights,        // Explicitly enable (default is true for non-headless)
+		HighlightDelay:  500 * time.Millisecond, // Slower highlights for demo visibility
+		Debug:           true,
+		ShowAnnotations: true,
+		EnhancedDOM:     true,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create agent: %v", err)
