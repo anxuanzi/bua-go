@@ -1,0 +1,67 @@
+# Basic navigation and interaction tests
+# These tests verify fundamental browser automation capabilities
+
+tests:
+  - name: google-navigate
+    description: Navigate to Google and verify page loads
+    url: https://www.google.com
+    task: "Confirm you are on the Google homepage by looking for the search box"
+    timeout: 1m
+    expected:
+      success: true
+      url_contains: "google"
+      min_steps: 1
+      max_steps: 5
+
+  - name: duckduckgo-search
+    description: Search on DuckDuckGo and verify results appear
+    url: https://duckduckgo.com
+    task: "Search for 'golang programming' and confirm search results are displayed"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "duckduckgo"
+      min_steps: 2
+      max_steps: 10
+
+  - name: wikipedia-navigation
+    description: Navigate Wikipedia and click a link
+    url: https://en.wikipedia.org
+    task: "Go to the Wikipedia page about 'Computer Science' by using the search"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "wiki"
+      min_steps: 2
+      max_steps: 12
+
+  - name: simple-click
+    description: Click a specific link on a page
+    url: https://example.com
+    task: "Click the 'More information' link on this page"
+    timeout: 1m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 5
+
+  - name: github-navigation
+    description: Navigate to a GitHub repository page
+    url: https://github.com
+    task: "Search for 'golang' using the search box and go to the results"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "github"
+      min_steps: 2
+      max_steps: 12
+
+  - name: hacker-news-read
+    description: Read content from Hacker News
+    url: https://news.ycombinator.com
+    task: "Find and click on the first news story link on the page"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 8

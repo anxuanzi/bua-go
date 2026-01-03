@@ -1,0 +1,64 @@
+# Data extraction and scraping tests
+# These tests verify the agent can extract structured data from pages
+
+tests:
+  - name: wikipedia-extract-intro
+    description: Extract introductory text from a Wikipedia article
+    url: https://en.wikipedia.org/wiki/Artificial_intelligence
+    task: "Read and summarize the first paragraph of this Wikipedia article about AI"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 8
+
+  - name: hackernews-extract-titles
+    description: Extract news titles from Hacker News
+    url: https://news.ycombinator.com
+    task: "List the titles of the top 5 stories on this page"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 8
+
+  - name: github-trending-repos
+    description: Extract trending repository information
+    url: https://github.com/trending
+    task: "Find and list the names of the top 3 trending repositories"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "github"
+      min_steps: 1
+      max_steps: 10
+
+  - name: quotes-toscrape
+    description: Extract quotes from a test scraping website
+    url: https://quotes.toscrape.com
+    task: "Extract the first 3 quotes shown on this page along with their authors"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 8
+
+  - name: books-toscrape-prices
+    description: Extract book prices from test website
+    url: https://books.toscrape.com
+    task: "Find and list the prices of the first 5 books on this page"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 8
+
+  - name: httpbin-headers
+    description: Read HTTP headers from httpbin
+    url: https://httpbin.org/headers
+    task: "Read the JSON response showing the request headers"
+    timeout: 1m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 5

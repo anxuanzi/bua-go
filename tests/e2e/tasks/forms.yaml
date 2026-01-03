@@ -1,0 +1,54 @@
+# Form interaction tests
+# These tests verify the agent can fill forms, select options, and submit data
+
+tests:
+  - name: httpbin-form-basic
+    description: Fill out a basic form with text inputs
+    url: https://httpbin.org/forms/post
+    task: "Fill out the form with name 'John Doe', email 'john@example.com' and submit it"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 2
+      max_steps: 15
+
+  - name: duckduckgo-settings
+    description: Interact with dropdown and toggle settings
+    url: https://duckduckgo.com/settings
+    task: "Change any available setting on this page and confirm the change was applied"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 2
+      max_steps: 12
+
+  - name: google-search-form
+    description: Use Google search form with specific query
+    url: https://www.google.com
+    task: "Type 'artificial intelligence news 2024' in the search box and press enter to search"
+    timeout: 2m
+    expected:
+      success: true
+      url_contains: "google"
+      min_steps: 2
+      max_steps: 10
+
+  - name: w3schools-tryit
+    description: Interact with an HTML editor form
+    url: https://www.w3schools.com/html/tryit.asp?filename=tryhtml_basic
+    task: "Click the 'Run' button to execute the HTML code"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 8
+
+  - name: input-types-test
+    description: Test various HTML input types
+    url: https://www.w3schools.com/html/html_form_input_types.asp
+    task: "Scroll down and find examples of different input types on this page"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 10

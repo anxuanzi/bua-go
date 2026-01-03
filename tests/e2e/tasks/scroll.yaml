@@ -1,0 +1,63 @@
+# Scrolling and viewport tests
+# These tests verify the agent can scroll and interact with content below the fold
+
+tests:
+  - name: wikipedia-scroll-sections
+    description: Scroll through Wikipedia article sections
+    url: https://en.wikipedia.org/wiki/Computer_science
+    task: "Scroll down to find the 'History' section of this article"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 15
+
+  - name: hackernews-scroll-more
+    description: Scroll to load more content
+    url: https://news.ycombinator.com
+    task: "Scroll down to the bottom of the page and click the 'More' link to see more stories"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 2
+      max_steps: 12
+
+  - name: github-readme-scroll
+    description: Scroll through a GitHub repository README
+    url: https://github.com/golang/go
+    task: "Scroll down the page to read more of the repository description and README"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 10
+
+  - name: scroll-to-footer
+    description: Scroll to page footer
+    url: https://www.wikipedia.org
+    task: "Scroll to the bottom of the page and find the footer links"
+    timeout: 1m30s
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 10
+
+  - name: infinite-scroll-detect
+    description: Detect and handle infinite scroll behavior
+    url: https://quotes.toscrape.com/scroll
+    task: "Scroll down to load more quotes using the infinite scroll mechanism"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 15
+
+  - name: scroll-to-element
+    description: Scroll to find specific content
+    url: https://en.wikipedia.org/wiki/Go_(programming_language)
+    task: "Scroll down to find the 'Syntax' section of this Go programming language article"
+    timeout: 2m
+    expected:
+      success: true
+      min_steps: 1
+      max_steps: 15
