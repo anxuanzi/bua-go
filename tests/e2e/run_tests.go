@@ -230,6 +230,7 @@ func runSingleTest(test TestCase, cfg Config) TestResult {
 		MaxSteps:        50, // Reasonable limit for tests
 		ShowAnnotations: true,
 		ShowHighlight:   true,
+		ScreenshotDir:   "./screenshots",
 	}
 
 	agent, err := bua.New(agentCfg)
