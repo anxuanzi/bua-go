@@ -53,3 +53,5 @@ temp/
 *.trace
 
 .serena/
+
+.screenshots/
